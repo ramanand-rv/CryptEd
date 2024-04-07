@@ -67,10 +67,9 @@ router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
 
     if (isCompleted) {
       progress.completedAt = new Date();
-      const educatorId =
-        typeof course.educatorId === "object" && "id" in course.educatorId
-          ? course.educatorId.id
-          : course.educatorId?.toString();
+      const educatorId = course.educatorId
+        ? String((course.educatorId as any)?._id ?? course.educatorId)
+        : undefined;
       const educator = educatorId ? await User.findById(educatorId) : null;
       const educatorWalletVerified = Boolean(educator?.walletVerifiedAt);
 

@@ -1,3 +1,7 @@
 # --- Dependencies ---
 # Node modules 
 node_modules/
+
+# Environment
+.env
+.local.env

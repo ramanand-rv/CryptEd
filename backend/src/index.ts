@@ -7,6 +7,14 @@ import authRoutes from "./routes/auth.js"; // .js extension even though it's TS
 dotenv.config();
 
 const app: Express = express();
+
+app.use(
+  cors({
+    origin: "*", // For development only
+    credentials: true,
+  }),
+);
+
 app.use(cors());
 app.use(express.json());
 

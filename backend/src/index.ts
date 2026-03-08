@@ -3,6 +3,9 @@ import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
 import authRoutes from "./routes/auth.js"; // .js extension even though it's TS
+import courseRoutes from "./routes/courses.js";
+import purchaseRoutes from "./routes/purchases.js";
+
 
 dotenv.config();
 
@@ -31,5 +34,8 @@ app.get("/", (req: Request, res: Response) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/courses", courseRoutes);
+app.use("/api/purchases", purchaseRoutes);
+
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

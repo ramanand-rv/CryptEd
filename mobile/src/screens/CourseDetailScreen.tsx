@@ -18,6 +18,27 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
   const { connected, publicKey, connect, signAndSendTransaction, balance } =
     useWallet();
 
+  const [purchased, setPurchased] = useState(false);
+
+  useEffect(() => {
+    checkIfPurchased();
+  }, []);
+
+  const checkIfPurchased = async () => {
+    try {
+      const res = await axios.get(
+        "http://localhost:5000/api/purchases/my-courses",
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+      const purchasedCourses = res.data;
+      setPurchased(purchasedCourses.some((c: any) => c._id === courseId));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchCourse();
   }, []);
@@ -107,6 +128,15 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
         </Text>
       )}
       <Button title="Purchase Course" onPress={handlePurchase} />
+
+      {purchased ? (
+        <Button
+          title="Continue Learning"
+          onPress={() => navigation.navigate("CoursePlayer", { courseId })}
+        />
+      ) : (
+        <Button title="Purchase Course" onPress={handlePurchase} />
+      )}
     </View>
   );
 };

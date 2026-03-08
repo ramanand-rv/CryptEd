@@ -3,6 +3,7 @@ import "react-native-get-random-values";
 import "react-native-url-polyfill/auto";
 import { Buffer } from "@craftzdog/react-native-buffer";
 
+
 const g = globalThis as typeof globalThis & {
   Buffer?: typeof Buffer;
   process?: {

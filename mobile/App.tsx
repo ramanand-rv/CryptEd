@@ -46,6 +46,7 @@ function AppStack() {
         component={CoursePlayerScreen}
         options={{ title: "Course Player" }}
       />
+
     </Stack.Navigator>
   );
 }

@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, Button, StyleSheet, Alert } from "react-native";
+import {
+  View,
+  Text,
+  Button,
+  StyleSheet,
+  Alert,
+  ScrollView,
+} from "react-native";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import ContentRenderer from "../components/ContentRenderer";
@@ -13,6 +20,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     quizScores: {},
   });
   const [currentChapter, setCurrentChapter] = useState(0);
+  const [loading, setLoading] = useState(true);
   const { token } = useAuth();
 
   useEffect(() => {
@@ -38,6 +46,8 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       );
     } catch (err) {
       console.error(err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -52,15 +62,23 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
           headers: { "x-auth-token": token },
         },
       );
+
+      // Update local progress
+      setProgress((prev: any) => ({
+        ...prev,
+        completedChapters: [...prev.completedChapters, currentChapter],
+      }));
+
       // Move to next chapter if available
       if (currentChapter + 1 < course.content.length) {
         setCurrentChapter((prev) => prev + 1);
       } else {
         Alert.alert("Congratulations!", "You have completed the course!");
-        // Optionally navigate to certificate/NFT screen
+        // Navigate to certificate/NFT screen or back to course list
       }
     } catch (err) {
       console.error(err);
+      Alert.alert("Error", "Failed to save progress");
     }
   };
 
@@ -76,50 +94,70 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
           headers: { "x-auth-token": token },
         },
       );
+
       Alert.alert("Quiz completed!", `Your score: ${score.toFixed(0)}%`);
+
+      // Update local progress
+      setProgress((prev: any) => ({
+        ...prev,
+        completedChapters: [...prev.completedChapters, currentChapter],
+        quizScores: { ...prev.quizScores, [currentChapter]: score },
+      }));
+
       // Move to next chapter
       if (currentChapter + 1 < course.content.length) {
         setCurrentChapter((prev) => prev + 1);
       } else {
         Alert.alert("Congratulations!", "You have completed the course!");
+        // Navigate to certificate/NFT screen
       }
     } catch (err) {
       console.error(err);
+      Alert.alert("Error", "Failed to save quiz score");
     }
   };
 
+  if (loading)
+    return (
+      <View style={styles.container}>
+        <Text>Loading course...</Text>
+      </View>
+    );
   if (!course)
     return (
-      <View>
-        <Text>Loading...</Text>
+      <View style={styles.container}>
+        <Text>Course not found</Text>
       </View>
     );
 
   const block = course.content[currentChapter];
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container}>
       <Text style={styles.chapterIndicator}>
         Chapter {currentChapter + 1} of {course.content.length}
       </Text>
       {block.type === "quiz" ? (
         <Quiz
-          questions={block.data?.questions || []}
+          questions={block.attrs?.questions || []}
           onComplete={handleQuizComplete}
         />
       ) : (
         <>
           <ContentRenderer blocks={[block]} />
-          <Button title="Mark as Completed" onPress={handleChapterComplete} />
+          <View style={styles.buttonContainer}>
+            <Button title="Mark as Completed" onPress={handleChapterComplete} />
+          </View>
         </>
       )}
-    </View>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   chapterIndicator: { fontSize: 16, color: "#666", marginBottom: 16 },
+  buttonContainer: { marginVertical: 20, alignItems: "center" },
 });
 
 export default CoursePlayerScreen;

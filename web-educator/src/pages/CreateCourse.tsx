@@ -48,6 +48,37 @@ const CreateCourse: React.FC = () => {
     }
   };
 
+  const handleGenerateQuiz = async () => {
+    if (!title || !description) {
+      alert("Please enter a title and description first");
+      return;
+    }
+
+    try {
+      const res = await axios.post(
+        "http://localhost:5000/api/courses/generate-quiz",
+        { title, description, numQuestions: 5 },
+        { headers: { "x-auth-token": token } },
+      );
+
+      const quizBlock = {
+        type: "quiz",
+        attrs: { questions: res.data.questions },
+      };
+
+      // Append the quiz block to the content
+      setContent((prev) => ({
+        ...prev,
+        content: [...(prev.content || []), quizBlock],
+      }));
+
+      alert("Quiz block added to the end of the content!");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate quiz. Please try again.");
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-6">
       <h1 className="text-2xl font-bold mb-6">Create New Course</h1>
@@ -85,6 +116,13 @@ const CreateCourse: React.FC = () => {
         </div>
         <div>
           <label className="block mb-1">Course Content</label>
+          <button
+            type="button"
+            onClick={handleGenerateQuiz}
+            className="mb-2 bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
+          >
+            Generate Quiz with AI
+          </button>
           <Editor content={content} onChange={setContent} />
         </div>
         <div>

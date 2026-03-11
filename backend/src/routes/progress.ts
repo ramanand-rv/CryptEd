@@ -3,6 +3,8 @@ import auth from "../middleware/auth.js";
 import Progress from "../models/Progress.js";
 import Course from "../models/Course.js";
 import User from "../models/User.js";
+import { mintCourseCompletionNFT } from "../services/metaplex.js";
+import { distributeReward } from "../services/reward.js";
 
 const router = express.Router();
 
@@ -23,58 +25,75 @@ router.get("/:courseId", auth, async (req: AuthRequest, res: Response) => {
   }
 });
 
-// Update progress (mark chapter completed, record quiz result)
 router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
   try {
-    const { completedChapters, quizResult } = req.body; // quizResult: { blockIndex, score, passed }
+    const { chapterIndex, quizScore } = req.body;
     const userId = req.user?.userId;
     const courseId = req.params.courseId;
 
     let progress = await Progress.findOne({ userId, courseId });
-
     if (!progress) {
       progress = new Progress({
         userId,
         courseId,
         completedChapters: [],
-        quizScores: [],
+        quizScores: {},
       });
     }
 
-    if (completedChapters) {
-      // Merge unique chapter indices
-      const newChapters = completedChapters.filter(
-        (idx: number) => !progress!.completedChapters.includes(idx),
-      );
-      progress.completedChapters.push(...newChapters);
+    if (
+      chapterIndex !== undefined &&
+      !progress.completedChapters.includes(chapterIndex)
+    ) {
+      progress.completedChapters.push(chapterIndex);
     }
 
-    if (quizResult) {
-      // Check if already have a score for this block, update or add
-      const existingIndex = progress.quizScores.findIndex(
-        (q) => q.blockIndex === quizResult.blockIndex,
-      );
-      if (existingIndex >= 0) {
-        progress.quizScores[existingIndex] = quizResult;
-      } else {
-        progress.quizScores.push(quizResult);
+    if (quizScore !== undefined) {
+      progress.quizScores.push({
+        blockIndex: chapterIndex,
+        score: quizScore,
+        passed: quizScore >= 70, // Assuming 70 is passing grade
+      });
+    }
+
+    // Check if course is completed
+    const course = await Course.findById(courseId).populate("educatorId");
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    const totalChapters = course.content.length;
+    const isCompleted =
+      progress.completedChapters.length >= totalChapters &&
+      !progress.completedAt;
+
+    if (isCompleted) {
+      progress.completedAt = new Date();
+
+      // Mint NFT if metadata URI exists
+      if (course.nftMetadataUri) {
+        try {
+          // Get learner's wallet address (assuming user has walletAddress field)
+          const user = await User.findById(userId);
+          if (user?.walletAddress) {
+            const mintAddress = await mintCourseCompletionNFT(
+              user.walletAddress,
+              course.nftMetadataUri,
+              course.title,
+            );
+            // Store mint address in user's ownedNFTs
+            await User.findByIdAndUpdate(userId, {
+              $push: { ownedNFTs: mintAddress },
+            });
+          }
+        } catch (err) {
+          console.error("NFT minting failed:", err);
+          // Don't fail the whole request, just log error
+        }
+      }
+      if (userId) {
+        await distributeReward(courseId, userId);
       }
     }
 
-    // Check if all chapters are completed (we need total chapters count)
-    const course = await Course.findById(courseId);
-    if (course) {
-      const totalChapters = course.content.length; // assuming each block is a chapter
-      if (
-        progress.completedChapters.length >= totalChapters &&
-        !progress.completedAt
-      ) {
-        progress.completedAt = new Date();
-        // Here you could trigger NFT minting (Day 6)
-      }
-    }
-
-    progress.lastAccessedAt = new Date();
     await progress.save();
     res.json(progress);
   } catch (err: any) {

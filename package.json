@@ -4,6 +4,8 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@metaplex-foundation/js": "^0.20.1",
+    "@solana/spl-token": "^0.4.14",
     "@tiptap/extension-blockquote": "^3.20.1",
     "@tiptap/extension-bold": "^3.20.1",
     "@tiptap/extension-bullet-list": "^3.20.1",

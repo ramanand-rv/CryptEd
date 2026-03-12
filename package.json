@@ -3,6 +3,7 @@
     "babel-plugin-module-resolver": "^5.0.2"
   },
   "dependencies": {
+    "@react-navigation/bottom-tabs": "^7.15.5",
     "@tiptap/extension-blockquote": "^3.20.1",
     "@tiptap/extension-bold": "^3.20.1",
     "@tiptap/extension-bullet-list": "^3.20.1",
@@ -22,6 +23,7 @@
     "@tiptap/extension-youtube": "^3.20.1",
     "@tiptap/react": "^3.20.1",
     "@tiptap/starter-kit": "^3.20.1",
-    "babel-preset-expo": "^55.0.10"
+    "babel-preset-expo": "^55.0.10",
+    "expo": "^55.0.6"
   }
 }

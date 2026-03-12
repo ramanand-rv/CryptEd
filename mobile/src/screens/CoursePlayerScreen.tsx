@@ -11,6 +11,7 @@ import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import ContentRenderer from "../components/ContentRenderer";
 import Quiz from "../components/Quiz";
+import ConfettiCannon from "react-native-confetti-cannon"; // <-- Import confetti
 
 const CoursePlayerScreen = ({ route, navigation }: any) => {
   const { courseId } = route.params;
@@ -21,6 +22,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   });
   const [currentChapter, setCurrentChapter] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [showConfetti, setShowConfetti] = useState(false); // <-- New state
   const { token } = useAuth();
 
   useEffect(() => {
@@ -73,8 +75,11 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       if (currentChapter + 1 < course.content.length) {
         setCurrentChapter((prev) => prev + 1);
       } else {
+        // Course completed!
+        setShowConfetti(true); // <-- Trigger confetti
         Alert.alert("Congratulations!", "You have completed the course!");
-        // Navigate to certificate/NFT screen or back to course list
+        // Optional: navigate back to course list after a delay
+        // setTimeout(() => navigation.goBack(), 3000);
       }
     } catch (err) {
       console.error(err);
@@ -108,8 +113,9 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       if (currentChapter + 1 < course.content.length) {
         setCurrentChapter((prev) => prev + 1);
       } else {
+        // Course completed!
+        setShowConfetti(true); // <-- Trigger confetti
         Alert.alert("Congratulations!", "You have completed the course!");
-        // Navigate to certificate/NFT screen
       }
     } catch (err) {
       console.error(err);
@@ -149,6 +155,16 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
             <Button title="Mark as Completed" onPress={handleChapterComplete} />
           </View>
         </>
+      )}
+
+      {/* Confetti animation */}
+      {showConfetti && (
+        <ConfettiCannon
+          count={200}
+          origin={{ x: -10, y: 0 }}
+          autoStart={true}
+          fadeOut={true}
+        />
       )}
     </ScrollView>
   );

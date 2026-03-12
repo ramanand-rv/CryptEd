@@ -11,7 +11,7 @@ import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import ContentRenderer from "../components/ContentRenderer";
 import Quiz from "../components/Quiz";
-import ConfettiCannon from "react-native-confetti-cannon"; // <-- Import confetti
+import ConfettiCannon from "react-native-confetti-cannon"; // Import confetti
 
 const CoursePlayerScreen = ({ route, navigation }: any) => {
   const { courseId } = route.params;
@@ -22,7 +22,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   });
   const [currentChapter, setCurrentChapter] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showConfetti, setShowConfetti] = useState(false); // <-- New state
+  const [showConfetti, setShowConfetti] = useState(false); // New state
   const { token } = useAuth();
 
   useEffect(() => {
@@ -76,9 +76,9 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         setCurrentChapter((prev) => prev + 1);
       } else {
         // Course completed!
-        setShowConfetti(true); // <-- Trigger confetti
+        setShowConfetti(true); // Trigger confetti
         Alert.alert("Congratulations!", "You have completed the course!");
-        // Optional: navigate back to course list after a delay
+        // can do: navigate back to course list after a delay
         // setTimeout(() => navigation.goBack(), 3000);
       }
     } catch (err) {
@@ -114,7 +114,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         setCurrentChapter((prev) => prev + 1);
       } else {
         // Course completed!
-        setShowConfetti(true); // <-- Trigger confetti
+        setShowConfetti(true); // Trigger confetti
         Alert.alert("Congratulations!", "You have completed the course!");
       }
     } catch (err) {
@@ -161,7 +161,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       {showConfetti && (
         <ConfettiCannon
           count={200}
-          origin={{ x: -10, y: 0 }}
+          origin={{ x: -10, y: -10 }}
           autoStart={true}
           fadeOut={true}
         />

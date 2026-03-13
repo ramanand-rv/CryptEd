@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import LottieView from "lottie-react-native";
 
 interface Question {
   question: string;
@@ -17,9 +18,19 @@ const Quiz: React.FC<QuizProps> = ({ questions, onComplete }) => {
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [score, setScore] = useState(0);
   const [showResult, setShowResult] = useState(false);
+  const [showCorrect, setShowCorrect] = useState(false);
+  const [showIncorrect, setShowIncorrect] = useState(false);
 
   const handleOptionPress = (index: number) => {
     setSelectedOption(index);
+    const isCorrect = index === questions[currentIndex].correct;
+    if (isCorrect) {
+      setShowCorrect(true);
+      setTimeout(() => setShowCorrect(false), 1000);
+    } else {
+      setShowIncorrect(true);
+      setTimeout(() => setShowIncorrect(false), 1000);
+    }
   };
 
   const handleNext = () => {
@@ -78,12 +89,30 @@ const Quiz: React.FC<QuizProps> = ({ questions, onComplete }) => {
           {currentIndex + 1 === questions.length ? "Finish" : "Next"}
         </Text>
       </TouchableOpacity>
+
+      {/* Lottie animations */}
+      {showCorrect && (
+        <LottieView
+          source={require("../../assets/correct.json")}
+          autoPlay
+          loop={false}
+          style={styles.animation}
+        />
+      )}
+      {showIncorrect && (
+        <LottieView
+          source={require("../../assets/incorrect.json")}
+          autoPlay
+          loop={false}
+          style={styles.animation}
+        />
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { padding: 16 },
+  container: { padding: 16, flex: 1 },
   question: { fontSize: 18, fontWeight: "600", marginBottom: 16 },
   option: {
     padding: 12,
@@ -109,6 +138,14 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   scoreText: { fontSize: 20, textAlign: "center" },
+  animation: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: [{ translateX: -50 }, { translateY: -50 }],
+    width: 150,
+    height: 150,
+  },
 });
 
 export default Quiz;

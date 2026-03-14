@@ -25,6 +25,9 @@
     "@tiptap/extension-youtube": "^3.20.1",
     "@tiptap/react": "^3.20.1",
     "@tiptap/starter-kit": "^3.20.1",
-    "babel-preset-expo": "^55.0.10"
+    "babel-preset-expo": "^55.0.10",
+    "expo": "^55.0.6",
+    "lottie-react-native": "~7.3.4",
+    "react-native-confetti-cannon": "^1.5.2"
   }
 }

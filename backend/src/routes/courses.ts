@@ -2,6 +2,7 @@ import express, { Request, Response } from "express";
 import auth from "../middleware/auth.js";
 import Course, { ICourse } from "../models/Course.js";
 import User from "../models/User.js";
+import { generateQuizQuestions } from "../services/ai.js";
 
 const router = express.Router();
 
@@ -115,6 +116,25 @@ router.delete("/:id", auth, async (req: AuthRequest, res: Response) => {
 
     await course.deleteOne();
     res.json({ msg: "Course removed" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/generate-quiz", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { title, description, numQuestions } = req.body;
+    if (!title || !description) {
+      return res
+        .status(400)
+        .json({ msg: "Title and description are required" });
+    }
+    const questions = await generateQuizQuestions(
+      title,
+      description,
+      numQuestions || 5,
+    );
+    res.json({ questions });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

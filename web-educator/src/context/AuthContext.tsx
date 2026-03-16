@@ -1,19 +1,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { createContext, useState, useContext } from "react";
+import React, { createContext, useEffect, useState, useContext } from "react";
 import type { ReactNode } from "react";
 
-import axios from "axios";
+import { api } from "../lib/api";
 
 interface User {
   id: string;
   email: string;
   name: string;
   role: string;
+  walletAddress?: string;
 }
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
+  loading: boolean;
   login: (
     email: string,
     password: string,
@@ -24,6 +26,7 @@ interface AuthContextType {
     name: string,
   ) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -32,11 +35,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(
+  const [token, setToken] = useState<string | null>(() =>
     localStorage.getItem("token"),
   );
+  const [loading, setLoading] = useState<boolean>(!!token);
 
-  const api = axios.create({ baseURL: "http://localhost:5000/api" });
+  useEffect(() => {
+    let isMounted = true;
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    api
+      .get("/users/me", { headers: { "x-auth-token": token } })
+      .then((res) => {
+        if (!isMounted) return;
+        setUser(res.data);
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        localStorage.removeItem("token");
+        setToken(null);
+        setUser(null);
+      })
+      .finally(() => {
+        if (!isMounted) return;
+        setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [token]);
 
   const login = async (email: string, password: string) => {
     try {
@@ -78,8 +109,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
     setUser(null);
   };
 
+  const refreshUser = async () => {
+    if (!token) return;
+    const res = await api.get("/users/me", {
+      headers: { "x-auth-token": token },
+    });
+    setUser(res.data);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ user, token, loading, login, register, logout, refreshUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

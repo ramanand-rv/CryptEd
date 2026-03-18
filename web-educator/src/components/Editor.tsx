@@ -30,7 +30,8 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-lg max-w-full mx-auto focus:outline-none p-4',
+        class:
+          "min-h-[420px] w-full px-6 py-5 text-base leading-7 text-slate-800 focus:outline-none",
       },
     },
   });
@@ -55,15 +56,15 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
   }
 
   const buttonClass = (isActive = false) =>
-    `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+    `px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wide transition-colors ${
       isActive
-        ? "bg-blue-600 text-white"
-        : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+        ? "bg-emerald-600 text-white shadow-soft"
+        : "bg-white text-slate-600 hover:text-slate-900 border border-slate-200"
     }`;
 
   return (
-    <div className="editor-container border border-gray-300 rounded-lg shadow-sm">
-      <div className="toolbar bg-gray-50 border-b border-gray-300 p-2 flex flex-wrap items-center gap-2 rounded-t-lg">
+    <div className="editor-container border border-slate-200 rounded-3xl shadow-soft bg-white/90">
+      <div className="toolbar bg-white/60 border-b border-slate-200 p-3 flex flex-wrap items-center gap-2 rounded-t-3xl">
         <button
           onClick={() => editor.chain().focus().toggleBold().run()}
           className={buttonClass(editor.isActive("bold"))}

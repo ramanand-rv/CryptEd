@@ -16,11 +16,8 @@ const app: Express = express();
 app.use(
   cors({
     origin: "*", // For development only
-    credentials: true,
   }),
 );
-
-app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 5000;

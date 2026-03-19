@@ -15,6 +15,14 @@ export interface ICourse extends Document {
   price: number; // in lamports
   content: IContentBlock[]; // array of blocks
   nftMetadataUri?: string; // IPFS URI for NFT image/metadata
+  views: number;
+  reviews: Array<{
+    userId?: mongoose.Types.ObjectId;
+    name?: string;
+    rating: number;
+    comment?: string;
+    createdAt: Date;
+  }>;
   rewardPool?: {
     totalAmount: number; // lamports
     remaining: number;
@@ -33,6 +41,16 @@ const CourseSchema: Schema = new Schema(
     price: { type: Number, required: true, default: 0 },
     content: { type: Array, required: true, default: [] },
     nftMetadataUri: { type: String },
+    views: { type: Number, default: 0 },
+    reviews: [
+      {
+        userId: { type: Schema.Types.ObjectId, ref: "User" },
+        name: String,
+        rating: { type: Number, min: 1, max: 5, required: true },
+        comment: String,
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
     rewardPool: {
       totalAmount: { type: Number, default: 0 },
       remaining: { type: Number, default: 0 },

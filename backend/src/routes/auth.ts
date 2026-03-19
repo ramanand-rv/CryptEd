@@ -32,6 +32,7 @@ router.post("/register/educator", async (req: Request, res: Response) => {
         email: user.email,
         name: user.name,
         role: user.role,
+        walletAddress: user.walletAddress,
       },
     });
   } catch (err: any) {
@@ -60,6 +61,7 @@ router.post("/login/educator", async (req: Request, res: Response) => {
         email: user.email,
         name: user.name,
         role: user.role,
+        walletAddress: user.walletAddress,
       },
     });
   } catch (err: any) {

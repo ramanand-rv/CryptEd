@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:frontend": "vite",
-    "dev:backend": "npm --prefix ../backend start",
+    "dev:backend": "npm --prefix ../backend run dev",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"

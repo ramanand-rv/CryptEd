@@ -14,11 +14,15 @@ const connection = new Connection(
   process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com",
 );
 
-const FEE_PAYER_SECRET_KEY = process.env.FEE_PAYER_SECRET_KEY;
-if (!FEE_PAYER_SECRET_KEY) throw new Error("FEE_PAYER_SECRET_KEY not set");
-
-const secretKey = bs58.decode(FEE_PAYER_SECRET_KEY);
-const feePayer = Keypair.fromSecretKey(new Uint8Array(secretKey));
+const getFeePayer = () => {
+  const rawKey = process.env.FEE_PAYER_SECRET_KEY || "";
+  const normalizedKey = rawKey.replace(/^"|"$/g, "").trim();
+  if (!normalizedKey) {
+    throw new Error("FEE_PAYER_SECRET_KEY not set");
+  }
+  const secretKey = bs58.decode(normalizedKey);
+  return Keypair.fromSecretKey(new Uint8Array(secretKey));
+};
 
 export async function distributeReward(courseId: string, userId: string) {
   const course = await Course.findById(courseId);
@@ -43,6 +47,8 @@ export async function distributeReward(courseId: string, userId: string) {
   if (!user?.walletAddress) return;
 
   try {
+    const feePayer = getFeePayer();
+
     // Transfer SOL from fee payer to user
     const transferTx = new Transaction().add(
       SystemProgram.transfer({

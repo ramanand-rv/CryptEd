@@ -6,6 +6,7 @@ export interface IUser extends Document {
   password?: string;
   role: "educator" | "learner";
   name?: string;
+  purchasedCourses?: mongoose.Types.ObjectId[];
   completedCourses: Array<{
     courseId: mongoose.Types.ObjectId;
     completedAt: Date;
@@ -19,6 +20,7 @@ const UserSchema: Schema = new Schema({
   password: { type: String },
   role: { type: String, enum: ["educator", "learner"], required: true },
   name: String,
+  purchasedCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }],
   completedCourses: [{ courseId: Schema.Types.ObjectId, completedAt: Date }],
   ownedNFTs: [String],
 });

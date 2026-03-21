@@ -5,21 +5,35 @@ import {
 } from "@metaplex-foundation/js";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
+import dotenv from "dotenv";
 
-// Load fee payer keypair from environment variable (base58 encoded private key)
-const FEE_PAYER_SECRET_KEY = process.env.FEE_PAYER_SECRET_KEY;
-if (!FEE_PAYER_SECRET_KEY) throw new Error("FEE_PAYER_SECRET_KEY not set");
+dotenv.config();
 
-const secretKey = bs58.decode(FEE_PAYER_SECRET_KEY);
-const feePayer = Keypair.fromSecretKey(new Uint8Array(secretKey));
+let metaplex: Metaplex | null = null;
 
 const connection = new Connection(
   process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com",
 );
 
-const metaplex = Metaplex.make(connection)
-  .use(keypairIdentity(feePayer))
-  .use(irysStorage({ address: "https://devnet.irys.xyz" })); // for metadata storage
+const getFeePayer = () => {
+  const rawKey = process.env.FEE_PAYER_SECRET_KEY || "";
+  const normalizedKey = rawKey.replace(/^"|"$/g, "").trim();
+  if (!normalizedKey) {
+    throw new Error("FEE_PAYER_SECRET_KEY not set");
+  }
+  const secretKey = bs58.decode(normalizedKey);
+  return Keypair.fromSecretKey(new Uint8Array(secretKey));
+};
+
+const getMetaplex = () => {
+  if (!metaplex) {
+    const feePayer = getFeePayer();
+    metaplex = Metaplex.make(connection)
+      .use(keypairIdentity(feePayer))
+      .use(irysStorage({ address: "https://devnet.irys.xyz" }));
+  }
+  return metaplex;
+};
 
 export async function mintCourseCompletionNFT(
   recipientAddress: string,
@@ -27,7 +41,7 @@ export async function mintCourseCompletionNFT(
   courseTitle: string,
 ): Promise<string> {
   try {
-    const { nft } = await metaplex.nfts().create({
+    const { nft } = await getMetaplex().nfts().create({
       uri: metadataUri,
       name: `${courseTitle} Completion NFT`,
       sellerFeeBasisPoints: 0, // no royalties

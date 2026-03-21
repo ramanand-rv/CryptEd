@@ -15,7 +15,9 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
   const editor = useEditor({
     extensions: [
       StarterKit,
-      Link,
+      Link.configure({
+        openOnClick: false,
+      }),
       Image,
       Youtube.configure({
         controls: false,
@@ -25,6 +27,12 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
     content,
     onUpdate: ({ editor }) => {
       onChange(editor.getJSON());
+    },
+    editorProps: {
+      attributes: {
+        class:
+          "min-h-[420px] w-full px-6 py-5 text-base leading-7 text-slate-800 focus:outline-none",
+      },
     },
   });
 
@@ -39,58 +47,86 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
     const url = window.prompt("Enter YouTube URL");
     if (url) editor.chain().focus().setYoutubeVideo({ src: url }).run();
   };
+  
+  const setLink = () => {
+    const url = window.prompt('URL')
+    if (url) {
+      editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
+    }
+  }
+
+  const buttonClass = (isActive = false) =>
+    `px-3 py-2 rounded-xl text-xs font-semibold uppercase tracking-wide transition-colors ${
+      isActive
+        ? "bg-emerald-600 text-white shadow-soft"
+        : "bg-white text-slate-600 hover:text-slate-900 border border-slate-200"
+    }`;
 
   return (
-    <div className="editor-container border rounded p-4">
-      <div className="toolbar mb-2 flex gap-2">
+    <div className="editor-container border border-slate-200 rounded-3xl shadow-soft bg-white/90">
+      <div className="toolbar bg-white/60 border-b border-slate-200 p-3 flex flex-wrap items-center gap-2 rounded-t-3xl">
         <button
           onClick={() => editor.chain().focus().toggleBold().run()}
-          className="px-2 py-1 bg-gray-200 rounded"
+          className={buttonClass(editor.isActive("bold"))}
         >
           Bold
         </button>
         <button
           onClick={() => editor.chain().focus().toggleItalic().run()}
-          className="px-2 py-1 bg-gray-200 rounded"
+          className={buttonClass(editor.isActive("italic"))}
         >
           Italic
         </button>
         <button
-          onClick={() =>
-            editor.chain().focus().toggleHeading({ level: 1 }).run()
-          }
-          className="px-2 py-1 bg-gray-200 rounded"
+          onClick={() => editor.chain().focus().toggleStrike().run()}
+          className={buttonClass(editor.isActive("strike"))}
+        >
+          Strike
+        </button>
+        <div className="w-px h-6 bg-gray-300 mx-1"></div>
+        <button
+          onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+          className={buttonClass(editor.isActive("heading", { level: 1 }))}
         >
           H1
         </button>
         <button
-          onClick={() =>
-            editor.chain().focus().toggleHeading({ level: 2 }).run()
-          }
-          className="px-2 py-1 bg-gray-200 rounded"
+          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+          className={buttonClass(editor.isActive("heading", { level: 2 }))}
         >
           H2
         </button>
         <button
+          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+          className={buttonClass(editor.isActive("heading", { level: 3 }))}
+        >
+          H3
+        </button>
+        <div className="w-px h-6 bg-gray-300 mx-1"></div>
+        <button
           onClick={() => editor.chain().focus().toggleBulletList().run()}
-          className="px-2 py-1 bg-gray-200 rounded"
+          className={buttonClass(editor.isActive("bulletList"))}
         >
           Bullet List
         </button>
         <button
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          className="px-2 py-1 bg-gray-200 rounded"
+          className={buttonClass(editor.isActive("orderedList"))}
         >
           Ordered List
         </button>
-        <button onClick={addImage} className="px-2 py-1 bg-gray-200 rounded">
+        <div className="w-px h-6 bg-gray-300 mx-1"></div>
+        <button onClick={addImage} className={buttonClass()}>
           Image
         </button>
-        <button onClick={addVideo} className="px-2 py-1 bg-gray-200 rounded">
+        <button onClick={addVideo} className={buttonClass()}>
           Video
         </button>
+        <button onClick={setLink} className={buttonClass()}>
+          Link
+        </button>
       </div>
-      <EditorContent editor={editor} className="prose max-w-full" />
+      <EditorContent editor={editor} />
     </div>
   );
 };

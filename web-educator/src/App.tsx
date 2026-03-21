@@ -4,9 +4,16 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import CreateCourse from "./pages/CreateCourse";
+import Profile from "./pages/Profile";
+import CourseDashboard from "./pages/CourseDashboard";
+import LoadingScreen from "./components/LoadingScreen";
 
 export function App() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <LoadingScreen />;
+  }
 
   return (
     <BrowserRouter>
@@ -26,6 +33,14 @@ export function App() {
         <Route
           path="/courses/new"
           element={user ? <CreateCourse /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/courses/:id"
+          element={user ? <CourseDashboard /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/profile"
+          element={user ? <Profile /> : <Navigate to="/login" />}
         />
         <Route path="/" element={<Navigate to="/dashboard" />} />
       </Routes>

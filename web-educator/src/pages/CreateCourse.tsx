@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Editor from "../components/Editor";
 import type { JSONContent } from "@tiptap/react";
+import { api } from "../lib/api";
 
 const CreateCourse: React.FC = () => {
   const { token } = useAuth();
@@ -19,32 +19,37 @@ const CreateCourse: React.FC = () => {
   const [nftMetadataUri, setNftMetadataUri] = useState("");
   const [rewardPoolAmount, setRewardPoolAmount] = useState<number>(0);
   const [rewardWinners, setRewardWinners] = useState<number>(0);
+  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
 
     const courseData = {
       title,
       description,
-      price: price * 1e9, // convert SOL to lamports (assuming UI shows SOL)
+      price: price * 1e9,
       content,
       nftMetadataUri: nftMetadataUri || undefined,
       rewardPool:
         rewardPoolAmount > 0
           ? {
               totalAmount: rewardPoolAmount * 1e9,
-              winnersCount: rewardWinners,
+              winnersCount: Math.max(1, rewardWinners || 1),
             }
           : undefined,
     };
 
     try {
-      await axios.post("http://localhost:5000/api/courses", courseData, {
+      await api.post("/courses", courseData, {
         headers: { "x-auth-token": token },
       });
       navigate("/dashboard");
     } catch (err) {
       console.error(err);
+      alert("Failed to create course. Please check the console for details.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -55,8 +60,8 @@ const CreateCourse: React.FC = () => {
     }
 
     try {
-      const res = await axios.post(
-        "http://localhost:5000/api/courses/generate-quiz",
+      const res = await api.post(
+        "/courses/generate-quiz",
         { title, description, numQuestions: 5 },
         { headers: { "x-auth-token": token } },
       );
@@ -66,13 +71,12 @@ const CreateCourse: React.FC = () => {
         attrs: { questions: res.data.questions },
       };
 
-      // Append the quiz block to the content
       setContent((prev) => ({
         ...prev,
         content: [...(prev.content || []), quizBlock],
       }));
 
-      alert("Quiz block added to the end of the content!");
+      alert("Quiz block added to the end of the content.");
     } catch (err) {
       console.error(err);
       alert("Failed to generate quiz. Please try again.");
@@ -80,95 +84,190 @@ const CreateCourse: React.FC = () => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-2xl font-bold mb-6">Create New Course</h1>
-      <form onSubmit={handleSubmit} className="space-y-6">
-        <div>
-          <label className="block mb-1">Title</label>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full border rounded p-2"
-            required
-          />
-        </div>
-        <div>
-          <label className="block mb-1">Description</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="w-full border rounded p-2"
-            rows={3}
-            required
-          />
-        </div>
-        <div>
-          <label className="block mb-1">Price (SOL)</label>
-          <input
-            type="number"
-            step="0.01"
-            value={price}
-            onChange={(e) => setPrice(parseFloat(e.target.value))}
-            className="w-full border rounded p-2"
-            required
-          />
-        </div>
-        <div>
-          <label className="block mb-1">Course Content</label>
-          <button
-            type="button"
-            onClick={handleGenerateQuiz}
-            className="mb-2 bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
-          >
-            Generate Quiz with AI
-          </button>
-          <Editor content={content} onChange={setContent} />
-        </div>
-        <div>
-          <label className="block mb-1">NFT Metadata URI (optional)</label>
-          <input
-            type="url"
-            value={nftMetadataUri}
-            onChange={(e) => setNftMetadataUri(e.target.value)}
-            className="w-full border rounded p-2"
-            placeholder="ipfs://..."
-          />
-        </div>
-        <div className="border-t pt-4">
-          <h2 className="text-lg font-semibold mb-2">Reward Pool (optional)</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block mb-1">Total SOL to distribute</label>
-              <input
-                type="number"
-                step="0.01"
-                value={rewardPoolAmount}
-                onChange={(e) =>
-                  setRewardPoolAmount(parseFloat(e.target.value))
-                }
-                className="w-full border rounded p-2"
-              />
-            </div>
-            <div>
-              <label className="block mb-1">Number of winners</label>
-              <input
-                type="number"
-                value={rewardWinners}
-                onChange={(e) => setRewardWinners(parseInt(e.target.value))}
-                className="w-full border rounded p-2"
-                min="1"
-              />
-            </div>
+    <div className="min-h-screen px-6 py-10">
+      <div className="max-w-6xl mx-auto space-y-10">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <Link to="/dashboard" className="text-xs uppercase text-emerald-600">
+              Back to dashboard
+            </Link>
+            <h1 className="text-3xl md:text-4xl font-semibold text-slate-900 mt-2">
+              Create a new course
+            </h1>
+            <p className="text-sm text-slate-600 mt-2 max-w-2xl">
+              Design an experience that feels as polished as a modern workspace.
+              Mix rich content, quizzes, and on-chain rewards in one flow.
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={handleGenerateQuiz}
+              className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition"
+            >
+              Generate AI quiz
+            </button>
+            <button
+              type="submit"
+              form="create-course"
+              disabled={submitting}
+              className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-70"
+            >
+              {submitting ? "Creating..." : "Publish course"}
+            </button>
           </div>
         </div>
-        <button
-          type="submit"
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+
+        <form
+          id="create-course"
+          onSubmit={handleSubmit}
+          className="grid lg:grid-cols-[0.9fr_1.1fr] gap-8 items-start"
         >
-          Create Course
-        </button>
-      </form>
+          <div className="space-y-6">
+            <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft">
+              <h2 className="text-lg font-semibold text-slate-900">
+                Course essentials
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Keep it clear and enticing. You can refine details later.
+              </p>
+              <div className="mt-5 space-y-4">
+                <div>
+                  <label
+                    htmlFor="title"
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Title
+                  </label>
+                  <input
+                    id="title"
+                    type="text"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    placeholder="Build your first crypto portfolio"
+                    required
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="description"
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Description
+                  </label>
+                  <textarea
+                    id="description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    rows={5}
+                    placeholder="What will learners achieve after this course?"
+                    required
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="price"
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    Price (SOL)
+                  </label>
+                  <input
+                    id="price"
+                    type="number"
+                    step="0.01"
+                    value={price}
+                    onChange={(e) => setPrice(parseFloat(e.target.value))}
+                    className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft">
+              <h2 className="text-lg font-semibold text-slate-900">
+                NFT & rewards
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Optional, but delightful. Reward learners for completion.
+              </p>
+              <div className="mt-5 space-y-4">
+                <div>
+                  <label
+                    htmlFor="nft-uri"
+                    className="block text-sm font-medium text-slate-700"
+                  >
+                    NFT metadata URI
+                  </label>
+                  <input
+                    id="nft-uri"
+                    type="url"
+                    value={nftMetadataUri}
+                    onChange={(e) => setNftMetadataUri(e.target.value)}
+                    className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    placeholder="ipfs://..."
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="reward-pool"
+                      className="block text-sm font-medium text-slate-700"
+                    >
+                      Total reward (SOL)
+                    </label>
+                    <input
+                      id="reward-pool"
+                      type="number"
+                      step="0.01"
+                      value={rewardPoolAmount}
+                      onChange={(e) =>
+                        setRewardPoolAmount(parseFloat(e.target.value))
+                      }
+                      className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="reward-winners"
+                      className="block text-sm font-medium text-slate-700"
+                    >
+                      Number of winners
+                    </label>
+                    <input
+                      id="reward-winners"
+                      type="number"
+                      value={rewardWinners}
+                      onChange={(e) =>
+                        setRewardWinners(parseInt(e.target.value))
+                      }
+                      className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      min="1"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Course content
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Use headings, images, videos, and quizzes to structure the
+                  experience.
+                </p>
+              </div>
+            </div>
+            <Editor content={content} onChange={setContent} />
+          </div>
+        </form>
+      </div>
     </div>
   );
 };

@@ -6,6 +6,9 @@ import Dashboard from "./pages/Dashboard";
 import CreateCourse from "./pages/CreateCourse";
 import Profile from "./pages/Profile";
 import CourseDashboard from "./pages/CourseDashboard";
+import GenerateQuiz from "./pages/GenerateQuiz";
+import CourseContents from "./pages/CourseContents";
+import CourseLessonEditor from "./pages/CourseLessonEditor";
 import LoadingScreen from "./components/LoadingScreen";
 
 export function App() {
@@ -37,6 +40,18 @@ export function App() {
         <Route
           path="/courses/:id"
           element={user ? <CourseDashboard /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/courses/:id/quiz"
+          element={user ? <GenerateQuiz /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/courses/:id/contents"
+          element={user ? <CourseContents /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/courses/:id/lessons/:lessonId/edit"
+          element={user ? <CourseLessonEditor /> : <Navigate to="/login" />}
         />
         <Route
           path="/profile"

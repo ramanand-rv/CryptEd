@@ -121,19 +121,40 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.post("/generate-quiz", auth, async (req: AuthRequest, res: Response) => {
   try {
-    const { title, description, numQuestions } = req.body;
-    if (!title || !description) {
+    const { title, topic, description, tags, numQuestions } = req.body;
+    const quizTopic = topic || title;
+    if (!quizTopic || !description) {
       return res
         .status(400)
-        .json({ msg: "Title and description are required" });
+        .json({ msg: "Topic and description are required" });
     }
+    const parsedCount =
+      typeof numQuestions === "number"
+        ? numQuestions
+        : Number.parseInt(numQuestions || "5", 10);
+    const safeCount = Number.isFinite(parsedCount) ? parsedCount : 5;
+    const count = Math.min(Math.max(safeCount, 1), 20);
+
+    const tagList = Array.isArray(tags)
+      ? tags
+      : typeof tags === "string"
+        ? tags.split(",")
+        : [];
+    const normalizedTags = tagList
+      .map((tag: any) => String(tag).trim())
+      .filter((tag: string) => tag.length > 0);
+
     const questions = await generateQuizQuestions(
-      title,
+      quizTopic,
       description,
-      numQuestions || 5,
+      normalizedTags,
+      count,
     );
     res.json({ questions });
   } catch (err: any) {
+    if (err?.message === "GEMINI_API_KEY is not configured") {
+      return res.status(500).json({ msg: err.message });
+    }
     res.status(500).json({ error: err.message });
   }
 });

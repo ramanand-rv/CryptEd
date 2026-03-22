@@ -62,7 +62,7 @@ const CreateCourse: React.FC = () => {
     try {
       const res = await api.post(
         "/courses/generate-quiz",
-        { title, description, numQuestions: 5 },
+        { topic: title, description, numQuestions: 5 },
         { headers: { "x-auth-token": token } },
       );
 

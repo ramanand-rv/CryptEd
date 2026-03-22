@@ -69,6 +69,29 @@ const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks }) => {
             <Text>Quiz block (to be implemented)</Text>
           </View>
         );
+      case "lesson":
+        const lessonBlocks = Array.isArray(block.attrs?.content?.content)
+          ? block.attrs.content.content
+          : [];
+        return (
+          <View key={index} style={styles.lessonBlock}>
+            <Text style={styles.lessonTitle}>
+              {block.attrs?.title || "Lesson"}
+            </Text>
+            {block.attrs?.description ? (
+              <Text style={styles.lessonDescription}>
+                {block.attrs.description}
+              </Text>
+            ) : null}
+            {lessonBlocks.length > 0 ? (
+              <View style={styles.lessonContent}>
+                {lessonBlocks.map((innerBlock: any, innerIndex: number) =>
+                  renderBlock(innerBlock, Number(`${index}${innerIndex}`)),
+                )}
+              </View>
+            ) : null}
+          </View>
+        );
       default:
         return null;
     }
@@ -99,6 +122,24 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: "#f0f0f0",
     marginVertical: 8,
+  },
+  lessonBlock: {
+    padding: 16,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    marginVertical: 8,
+  },
+  lessonTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    marginBottom: 6,
+  },
+  lessonDescription: {
+    fontSize: 14,
+    color: "#475569",
+  },
+  lessonContent: {
+    marginTop: 10,
   },
 });
 

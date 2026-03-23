@@ -150,24 +150,30 @@ const LessonRow: React.FC<LessonRowProps> = ({
       } ${isDragging ? "opacity-50" : "opacity-100"}`}
       {...(isSidebarCollapsed ? attributes : {})}
       {...(isSidebarCollapsed ? listeners : {})}
-      onClick={onSelect}
+      onClick={() => {
+        if (isSidebarCollapsed) {
+          onToggleCollapse();
+        }
+        onSelect();
+      }}
     >
       {isOver && !isDragging && (
         <div className="absolute -top-1 left-4 right-4 h-0.5 bg-emerald-400 rounded-full" />
       )}
 
       <div className="flex items-start gap-3">
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleCollapse();
-          }}
-          className="mt-1 flex h-6 w-6 items-center justify-center rounded-lg text-slate-400 hover:text-slate-600"
-          aria-label={isCollapsed ? "Expand lesson" : "Collapse lesson"}
-        >
-          {isCollapsed ? "+" : "-"}
-        </button>
+        {!isSidebarCollapsed && (
+          <button
+            ref={setActivatorNodeRef}
+            {...attributes}
+            {...listeners}
+            onClick={(event) => event.stopPropagation()}
+            className="mt-1 rounded-lg px-2 py-1 text-slate-300 hover:text-slate-500 opacity-0 group-hover:opacity-100 transition"
+            aria-label="Drag lesson"
+          >
+            ⋮⋮
+          </button>
+        )}
 
         <div className="flex-1 min-w-0">
           {isEditing ? (
@@ -215,51 +221,7 @@ const LessonRow: React.FC<LessonRowProps> = ({
             </div>
           )}
         </div>
-
-        {!isSidebarCollapsed && (
-          <button
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
-            onClick={(event) => event.stopPropagation()}
-            className="mt-1 rounded-lg px-2 py-1 text-slate-300 hover:text-slate-500 opacity-0 group-hover:opacity-100 transition"
-            aria-label="Drag lesson"
-          >
-            ⋮⋮
-          </button>
-        )}
       </div>
-
-      {!isSidebarCollapsed && !isCollapsed && (
-        <div className="mt-3 pl-9 space-y-2 text-xs text-slate-500">
-          <div className="flex items-center justify-between">
-            <span className="uppercase tracking-[0.2em] text-[10px] text-slate-400">
-              Sub-items
-            </span>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onStartRename();
-              }}
-              className="text-[10px] uppercase text-emerald-600"
-            >
-              Rename
-            </button>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-white px-2 py-1">
-            Content
-          </div>
-          {lesson.quizzes.map((quiz) => (
-            <div
-              key={quiz.id}
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1"
-            >
-              Quiz: {quiz.topic || "Untitled"}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 };

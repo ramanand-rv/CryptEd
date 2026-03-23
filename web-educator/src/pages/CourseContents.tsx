@@ -572,7 +572,7 @@ const CourseContents: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50/70">
-      <div className="max-w-[1400px] mx-auto px-4 md:px-8 py-8 space-y-6">
+      <div className="max-w-350 mx-auto px-4 md:px-8 py-8 space-y-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <Link
@@ -585,7 +585,8 @@ const CourseContents: React.FC = () => {
               Course contents
             </h1>
             <p className="text-sm text-slate-500 mt-2 max-w-2xl">
-              Organize lessons and content for {courseTitle}. Changes auto-save locally.
+              Organize lessons and content for {courseTitle}. Changes auto-save
+              locally.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -619,8 +620,8 @@ const CourseContents: React.FC = () => {
 
         {hasLegacy && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-            Legacy content blocks were detected. They will be preserved when you sync,
-            but they are not editable here yet.
+            Legacy content blocks were detected. They will be preserved when you
+            sync, but they are not editable here yet.
           </div>
         )}
 
@@ -655,7 +656,9 @@ const CourseContents: React.FC = () => {
 
             <div
               className={`flex items-center py-4 border-b border-slate-200 ${
-                sidebarCollapsed ? "justify-center px-2" : "justify-between px-4"
+                sidebarCollapsed
+                  ? "justify-center px-2"
+                  : "justify-between px-4"
               }`}
             >
               {!sidebarCollapsed && (
@@ -672,13 +675,17 @@ const CourseContents: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setSidebarCollapsed((prev) => !prev)}
-                  title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                  aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  title={
+                    sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                  }
+                  aria-label={
+                    sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                  }
                   className={`rounded-full border border-slate-200 py-1 text-xs font-semibold text-slate-600 ${
                     sidebarCollapsed ? "px-2" : "px-3"
                   }`}
                 >
-                  {sidebarCollapsed ? ">" : "Collapse"}
+                  {sidebarCollapsed ? ">" : "<"}
                 </button>
                 {!sidebarCollapsed && (
                   <button
@@ -733,23 +740,23 @@ const CourseContents: React.FC = () => {
                   {activeDragId && (
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-xl">
                       <p className="text-sm font-medium text-slate-800">
-                        {lessons.find((lesson) => lesson.id === activeDragId)?.title ||
-                          "Lesson"}
+                        {lessons.find((lesson) => lesson.id === activeDragId)
+                          ?.title || "Lesson"}
                       </p>
                     </div>
                   )}
                 </DragOverlay>
               </DndContext>
-            </div>
 
-            <div className="border-t border-slate-200 px-4 py-4">
-              <button
-                type="button"
-                onClick={addLesson}
-                className="w-full rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 transition"
-              >
-                + New lesson
-              </button>
+              <div className="border-t border-slate-200 pt-3">
+                <button
+                  type="button"
+                  onClick={addLesson}
+                  className="w-full rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 transition"
+                >
+                  {sidebarCollapsed ? "+" : "+ New lesson"}
+                </button>
+              </div>
             </div>
           </aside>
 
@@ -760,7 +767,9 @@ const CourseContents: React.FC = () => {
                   <input
                     value={activeLesson.title}
                     onChange={(event) =>
-                      updateLesson(activeLesson.id, { title: event.target.value })
+                      updateLesson(activeLesson.id, {
+                        title: event.target.value,
+                      })
                     }
                     className="w-full text-3xl md:text-4xl font-semibold text-slate-900 bg-transparent focus:outline-none"
                     placeholder="Lesson title"
@@ -773,7 +782,7 @@ const CourseContents: React.FC = () => {
                       })
                     }
                     className="w-full resize-none rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-600 focus:border-emerald-400 focus:outline-none"
-                    rows={3}
+                    rows={2}
                     placeholder="Lesson description"
                   />
                 </div>

@@ -738,7 +738,7 @@ const CourseContents: React.FC = () => {
 
                 <DragOverlay>
                   {activeDragId && (
-                    <div className="pointer-events-none translate-x-3 -translate-y-1 rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-xl">
+                    <div className="pointer-events-none translate-x-3 -translate-y-1 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-2 shadow-xl ring-2 ring-emerald-200/60">
                       <p className="text-sm font-medium text-slate-800">
                         {lessons.find((lesson) => lesson.id === activeDragId)
                           ?.title || "Lesson"}

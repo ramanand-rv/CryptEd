@@ -19,8 +19,15 @@ router.post("/", auth, async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ msg: "Only educators can create courses" });
     }
 
-    const { title, description, price, content, nftMetadataUri, rewardPool } =
-      req.body;
+    const {
+      title,
+      description,
+      price,
+      content,
+      nftMetadataUri,
+      rewardPool,
+      status,
+    } = req.body;
 
     const course = new Course({
       title,
@@ -29,6 +36,7 @@ router.post("/", auth, async (req: AuthRequest, res: Response) => {
       price,
       content,
       nftMetadataUri,
+      status: status === "published" ? "published" : "draft",
       rewardPool: rewardPool
         ? {
             totalAmount: rewardPool.totalAmount,
@@ -112,7 +120,25 @@ router.get("/metrics/overview", auth, async (req: AuthRequest, res: Response) =>
 // Get all courses (public)
 router.get("/", async (req: Request, res: Response) => {
   try {
-    const courses = await Course.find().populate("educatorId", "name email");
+    const courses = await Course.find({
+      $or: [{ status: "published" }, { status: { $exists: false } }],
+    }).populate("educatorId", "name email");
+    res.json(courses);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get educator courses (including drafts)
+router.get("/educator", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.user?.role !== "educator") {
+      return res.status(403).json({ msg: "Only educators can view courses" });
+    }
+
+    const courses = await Course.find({
+      educatorId: req.user.userId,
+    }).populate("educatorId", "name email");
     res.json(courses);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -183,6 +209,7 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
         id: course._id,
         title: course.title,
         description: course.description,
+        status: course.status,
       },
       metrics: {
         views: course.views || 0,
@@ -224,14 +251,24 @@ router.put("/:id", auth, async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ msg: "Not authorized" });
     }
 
-    const { title, description, price, content, nftMetadataUri, rewardPool } =
-      req.body;
+    const {
+      title,
+      description,
+      price,
+      content,
+      nftMetadataUri,
+      rewardPool,
+      status,
+    } = req.body;
 
     course.title = title || course.title;
     course.description = description || course.description;
     course.price = price !== undefined ? price : course.price;
     course.content = content || course.content;
     course.nftMetadataUri = nftMetadataUri || course.nftMetadataUri;
+    if (status === "draft" || status === "published") {
+      course.status = status;
+    }
     if (rewardPool) {
       course.rewardPool = {
         totalAmount: rewardPool.totalAmount,

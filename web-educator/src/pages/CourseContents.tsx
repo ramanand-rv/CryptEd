@@ -5,7 +5,7 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
-  closestCenter,
+  pointerWithin,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -706,7 +706,7 @@ const CourseContents: React.FC = () => {
             >
               <DndContext
                 sensors={sensors}
-                collisionDetection={closestCenter}
+                collisionDetection={pointerWithin}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
                 onDragCancel={handleDragCancel}
@@ -738,7 +738,7 @@ const CourseContents: React.FC = () => {
 
                 <DragOverlay>
                   {activeDragId && (
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-xl">
+                    <div className="pointer-events-none translate-x-3 -translate-y-1 rounded-2xl border border-slate-200 bg-white px-4 py-2 shadow-xl">
                       <p className="text-sm font-medium text-slate-800">
                         {lessons.find((lesson) => lesson.id === activeDragId)
                           ?.title || "Lesson"}

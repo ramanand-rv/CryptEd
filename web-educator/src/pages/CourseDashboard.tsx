@@ -8,6 +8,7 @@ interface CourseMetricsResponse {
     id: string;
     title: string;
     description: string;
+    status?: "draft" | "published";
   };
   metrics: {
     views: number;
@@ -125,9 +126,20 @@ const CourseDashboard: React.FC = () => {
             <Link to="/dashboard" className="text-xs uppercase text-emerald-600">
               Back to dashboard
             </Link>
-            <h1 className="text-3xl font-semibold text-slate-900 mt-2">
-              {data.course.title}
-            </h1>
+            <div className="flex items-center gap-3 mt-2">
+              <h1 className="text-3xl font-semibold text-slate-900">
+                {data.course.title}
+              </h1>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                  data.course.status === "draft"
+                    ? "bg-slate-100 text-slate-600"
+                    : "bg-emerald-100 text-emerald-700"
+                }`}
+              >
+                {data.course.status === "draft" ? "Draft" : "Published"}
+              </span>
+            </div>
             <p className="text-sm text-slate-600 mt-2 max-w-2xl">
               {data.course.description}
             </p>

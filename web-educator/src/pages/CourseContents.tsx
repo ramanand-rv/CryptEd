@@ -234,6 +234,9 @@ const CourseContents: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [courseTitle, setCourseTitle] = useState("");
+  const [courseStatus, setCourseStatus] = useState<"draft" | "published">(
+    "draft",
+  );
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [legacyBlocks, setLegacyBlocks] = useState<any[]>([]);
   const [hasLegacy, setHasLegacy] = useState(false);
@@ -268,6 +271,7 @@ const CourseContents: React.FC = () => {
         });
         const course = res.data;
         setCourseTitle(course?.title || "Course");
+        setCourseStatus(course?.status === "draft" ? "draft" : "published");
 
         const blocks = Array.isArray(course?.content)
           ? course.content
@@ -562,6 +566,30 @@ const CourseContents: React.FC = () => {
     }
   };
 
+  const handlePublishCourse = async () => {
+    if (!id || courseStatus === "published") return;
+    setIsSyncing(true);
+    setError(null);
+
+    try {
+      await api.put(
+        `/courses/${id}`,
+        { status: "published" },
+        { headers: { "x-auth-token": token } },
+      );
+      setCourseStatus("published");
+    } catch (err: any) {
+      console.error(err);
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to publish course.";
+      setError(message);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -581,9 +609,20 @@ const CourseContents: React.FC = () => {
             >
               Back to course dashboard
             </Link>
-            <h1 className="text-3xl md:text-4xl font-semibold text-slate-900 mt-2">
-              Course contents
-            </h1>
+            <div className="flex items-center gap-3 mt-2">
+              <h1 className="text-3xl md:text-4xl font-semibold text-slate-900">
+                Course contents
+              </h1>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                  courseStatus === "published"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                {courseStatus === "published" ? "Published" : "Draft"}
+              </span>
+            </div>
             <p className="text-sm text-slate-500 mt-2 max-w-2xl">
               Organize lessons and content for {courseTitle}. Changes auto-save
               locally.
@@ -607,8 +646,22 @@ const CourseContents: React.FC = () => {
               disabled={isSyncing}
               className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-60"
             >
-              {isSyncing ? "Syncing..." : "Sync to course"}
+              {isSyncing
+                ? "Syncing..."
+                : courseStatus === "published"
+                  ? "Save changes"
+                  : "Save draft"}
             </button>
+            {courseStatus !== "published" && (
+              <button
+                type="button"
+                onClick={handlePublishCourse}
+                disabled={isSyncing}
+                className="rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
+              >
+                Publish course
+              </button>
+            )}
           </div>
         </div>
 

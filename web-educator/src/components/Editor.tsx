@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import type { JSONContent } from "@tiptap/react";
+import { Node, mergeAttributes } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
@@ -12,6 +13,7 @@ import Placeholder from "@tiptap/extension-placeholder";
 interface EditorProps {
   content: JSONContent;
   onChange: (content: JSONContent) => void;
+  onAddQuiz?: () => void;
 }
 
 interface SlashPosition {
@@ -32,7 +34,51 @@ interface CommandItem {
   action: (editor: ReturnType<typeof useEditor>) => void;
 }
 
-const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
+const QuizNode = Node.create({
+  name: "quiz",
+  group: "block",
+  atom: true,
+  selectable: true,
+  draggable: true,
+  addAttributes() {
+    return {
+      title: { default: "Quiz" },
+      description: { default: "" },
+      tags: { default: [] },
+      questions: { default: [] },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "div[data-type='quiz']" }];
+  },
+  renderHTML({ node, HTMLAttributes }) {
+    const questionCount = Array.isArray(node.attrs.questions)
+      ? node.attrs.questions.length
+      : 0;
+    const children: any[] = [
+      ["div", { class: "quiz-node__title" }, node.attrs.title || "Quiz"],
+    ];
+    if (node.attrs.description) {
+      children.push(["div", { class: "quiz-node__desc" }, node.attrs.description]);
+    }
+    children.push([
+      "div",
+      { class: "quiz-node__meta" },
+      `${questionCount} question${questionCount === 1 ? "" : "s"}`,
+    ]);
+
+    return [
+      "div",
+      mergeAttributes(HTMLAttributes, {
+        "data-type": "quiz",
+        class: "quiz-node",
+      }),
+      ...children,
+    ];
+  },
+});
+
+const Editor: React.FC<EditorProps> = ({ content, onChange, onAddQuiz }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const filteredCommandsRef = useRef<CommandItem[]>([]);
   const slashOpenRef = useRef(false);
@@ -46,6 +92,7 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
   const editor = useEditor({
     extensions: [
       StarterKit,
+      QuizNode,
       TaskList,
       TaskItem.configure({
         nested: true,
@@ -338,6 +385,29 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
           .editor-container li[data-type="taskItem"] > div {
             flex: 1;
           }
+          .editor-container .quiz-node {
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            background: #f8fafc;
+            padding: 14px 16px;
+            margin: 12px 0;
+          }
+          .editor-container .quiz-node__title {
+            font-weight: 600;
+            color: #0f172a;
+            margin-bottom: 4px;
+          }
+          .editor-container .quiz-node__desc {
+            font-size: 0.85rem;
+            color: #64748b;
+            margin-bottom: 6px;
+          }
+          .editor-container .quiz-node__meta {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            color: #94a3b8;
+          }
         `}
       </style>
       <div className="toolbar bg-white/80 border-b border-slate-200 px-4 py-3 flex flex-wrap items-center gap-2">
@@ -413,6 +483,14 @@ const Editor: React.FC<EditorProps> = ({ content, onChange }) => {
         <button onClick={setLink} className={buttonClass()}>
           Link
         </button>
+        {onAddQuiz && (
+          <>
+            <div className="w-px h-6 bg-gray-300 mx-1"></div>
+            <button onClick={onAddQuiz} className={buttonClass()}>
+              Quiz
+            </button>
+          </>
+        )}
       </div>
       <EditorContent editor={editor} />
 

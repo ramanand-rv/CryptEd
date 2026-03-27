@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { JSONContent } from "@tiptap/react";
 import {
   DndContext,
@@ -26,12 +26,16 @@ interface QuizQuestion {
   correct: number;
 }
 
-interface LessonQuiz {
-  id: string;
-  topic: string;
+interface QuizPayload {
+  title: string;
   description: string;
   tags: string[];
   questions: QuizQuestion[];
+}
+
+interface PendingQuiz {
+  lessonId: string;
+  quiz: QuizPayload;
 }
 
 interface Lesson {
@@ -39,7 +43,6 @@ interface Lesson {
   title: string;
   description: string;
   content: JSONContent;
-  quizzes: LessonQuiz[];
 }
 
 interface StoredState {
@@ -65,6 +68,7 @@ const createId = () =>
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const storageKey = (courseId: string) => `course-contents:${courseId}`;
+const pendingQuizKey = (courseId: string) => `pending-quiz:${courseId}`;
 
 const loadStoredState = (courseId: string): StoredState | null => {
   if (typeof window === "undefined") return null;
@@ -83,17 +87,12 @@ const saveStoredState = (courseId: string, state: StoredState) => {
   window.localStorage.setItem(storageKey(courseId), JSON.stringify(state));
 };
 
-const parseTags = (tags: unknown): string[] => {
-  if (Array.isArray(tags)) {
-    return tags.map((tag) => String(tag).trim()).filter(Boolean);
-  }
-  if (typeof tags === "string") {
-    return tags
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter(Boolean);
-  }
-  return [];
+const appendQuizBlock = (content: JSONContent, quiz: QuizPayload): JSONContent => {
+  const existingBlocks = Array.isArray(content.content) ? content.content : [];
+  return {
+    ...content,
+    content: [...existingBlocks, { type: "quiz", attrs: quiz }],
+  };
 };
 
 interface LessonRowProps {
@@ -213,7 +212,7 @@ const LessonRow: React.FC<LessonRowProps> = ({
               >
                 {lesson.title || "Untitled lesson"}
               </p>
-              {lesson.description && (
+              {!isCollapsed && lesson.description && (
                 <p className="text-xs text-slate-400 truncate">
                   {lesson.description}
                 </p>
@@ -226,9 +225,74 @@ const LessonRow: React.FC<LessonRowProps> = ({
   );
 };
 
+interface LessonBasicsProps {
+  lesson: Lesson;
+  onUpdate: (updates: Partial<Lesson>) => void;
+}
+
+const LessonBasics: React.FC<LessonBasicsProps> = ({ lesson, onUpdate }) => (
+  <div className="space-y-4">
+    <input
+      value={lesson.title}
+      onChange={(event) => onUpdate({ title: event.target.value })}
+      className="w-full text-3xl md:text-4xl font-semibold text-slate-900 bg-transparent focus:outline-none"
+      placeholder="Lesson title"
+    />
+    <textarea
+      value={lesson.description}
+      onChange={(event) => onUpdate({ description: event.target.value })}
+      className="w-full resize-none rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-600 focus:border-emerald-400 focus:outline-none"
+      rows={3}
+      placeholder="Lesson description"
+    />
+  </div>
+);
+
+interface ContentLessonEditorProps {
+  lesson: Lesson;
+  onDelete: () => void;
+  onChangeContent: (content: JSONContent) => void;
+  onAddQuiz: () => void;
+}
+
+const ContentLessonEditor: React.FC<ContentLessonEditorProps> = ({
+  lesson,
+  onDelete,
+  onChangeContent,
+  onAddQuiz,
+}) => (
+  <div className="space-y-3">
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+          Lesson Editor
+        </p>
+        <p className="text-sm text-slate-500">
+          Type / to insert blocks, images, or lists.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="text-xs uppercase font-semibold text-rose-500"
+      >
+        Delete lesson
+      </button>
+    </div>
+    <Editor
+      key={lesson.id}
+      content={lesson.content}
+      onChange={onChangeContent}
+      onAddQuiz={onAddQuiz}
+    />
+  </div>
+);
+
 const CourseContents: React.FC = () => {
   const { id } = useParams();
   const { token } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -281,42 +345,16 @@ const CourseContents: React.FC = () => {
 
         const parsedLessons: Lesson[] = [];
         const extras: any[] = [];
-        let currentLesson: Lesson | null = null;
         let legacyDetected = false;
 
         blocks.forEach((block: any) => {
           if (block?.type === "lesson") {
             const lessonId = block?.attrs?.lessonId || createId();
-            currentLesson = {
+            parsedLessons.push({
               id: lessonId,
               title: block?.attrs?.title || "Untitled lesson",
               description: block?.attrs?.description || "",
               content: block?.attrs?.content || DEFAULT_CONTENT,
-              quizzes: [],
-            };
-            parsedLessons.push(currentLesson);
-            return;
-          }
-
-          if (block?.type === "quiz") {
-            if (!currentLesson) {
-              currentLesson = {
-                id: createId(),
-                title: "Lesson 1",
-                description: "",
-                content: DEFAULT_CONTENT,
-                quizzes: [],
-              };
-              parsedLessons.push(currentLesson);
-            }
-            currentLesson.quizzes.push({
-              id: block?.attrs?.quizId || createId(),
-              topic: block?.attrs?.topic || "",
-              description: block?.attrs?.description || "",
-              tags: parseTags(block?.attrs?.tags),
-              questions: Array.isArray(block?.attrs?.questions)
-                ? block.attrs.questions
-                : [],
             });
             return;
           }
@@ -333,7 +371,6 @@ const CourseContents: React.FC = () => {
             title: "Lesson 1",
             description: "",
             content: DEFAULT_CONTENT,
-            quizzes: [],
           });
         }
 
@@ -343,7 +380,6 @@ const CourseContents: React.FC = () => {
             ...lesson,
             description: lesson.description || "",
             content: lesson.content || DEFAULT_CONTENT,
-            quizzes: Array.isArray(lesson.quizzes) ? lesson.quizzes : [],
           }));
           setLessons(normalizedLessons);
           setCollapsedLessonIds(new Set(stored.collapsedLessonIds || []));
@@ -432,6 +468,7 @@ const CourseContents: React.FC = () => {
 
   const lessonIds = useMemo(() => lessons.map((lesson) => lesson.id), [lessons]);
 
+
   useEffect(() => {
     if (!lessons.length) return;
     if (selectedLessonId && lessons.some((lesson) => lesson.id === selectedLessonId)) {
@@ -439,6 +476,28 @@ const CourseContents: React.FC = () => {
     }
     setSelectedLessonId(lessons[0].id);
   }, [lessons, selectedLessonId]);
+
+  useEffect(() => {
+    if (!id || lessons.length === 0) return;
+    if (typeof window === "undefined") return;
+
+    const raw = window.localStorage.getItem(pendingQuizKey(id));
+    if (!raw) return;
+
+    try {
+      const pending = JSON.parse(raw) as PendingQuiz;
+      const targetId = pending.lessonId || selectedLessonId;
+      const targetLesson = lessons.find((lesson) => lesson.id === targetId);
+      if (!targetLesson) return;
+
+      updateLesson(targetLesson.id, {
+        content: appendQuizBlock(targetLesson.content, pending.quiz),
+      });
+      window.localStorage.removeItem(pendingQuizKey(id));
+    } catch (err) {
+      console.error("Failed to apply pending quiz", err);
+    }
+  }, [id, lessons, selectedLessonId]);
 
   const updateLesson = (lessonId: string, updates: Partial<Lesson>) => {
     setLessons((prev) =>
@@ -448,18 +507,35 @@ const CourseContents: React.FC = () => {
     );
   };
 
-  const addLesson = () => {
+  const addLesson = (afterId?: string) => {
     const newLesson: Lesson = {
       id: createId(),
       title: "New lesson",
       description: "",
       content: DEFAULT_CONTENT,
-      quizzes: [],
     };
-    setLessons((prev) => [...prev, newLesson]);
+    setLessons((prev) => {
+      if (!afterId) return [...prev, newLesson];
+      const index = prev.findIndex((lesson) => lesson.id === afterId);
+      if (index === -1) return [...prev, newLesson];
+      const next = [...prev];
+      next.splice(index + 1, 0, newLesson);
+      return next;
+    });
     setSelectedLessonId(newLesson.id);
     setEditingLessonId(newLesson.id);
     setEditingTitle(newLesson.title);
+  };
+
+  const openQuizBuilder = (lesson: Lesson) => {
+    if (!id) return;
+    const params = new URLSearchParams({
+      lessonId: lesson.id,
+      returnTo: `${location.pathname}${location.search}`,
+      topic: lesson.title || "",
+      description: lesson.description || "",
+    });
+    navigate(`/courses/${id}/quiz?${params.toString()}`);
   };
 
   const removeLesson = (lessonId: string) => {
@@ -523,28 +599,15 @@ const CourseContents: React.FC = () => {
     setIsSyncing(true);
     setError(null);
 
-    const flattened = lessons.flatMap((lesson) => [
-      {
-        type: "lesson",
-        attrs: {
-          lessonId: lesson.id,
-          title: lesson.title.trim() || "Untitled lesson",
-          description: lesson.description.trim(),
-          content: lesson.content,
-        },
+    const flattened = lessons.map((lesson) => ({
+      type: "lesson",
+      attrs: {
+        lessonId: lesson.id,
+        title: lesson.title.trim() || "Untitled lesson",
+        description: lesson.description.trim(),
+        content: lesson.content,
       },
-      ...lesson.quizzes.map((quiz) => ({
-        type: "quiz",
-        attrs: {
-          quizId: quiz.id,
-          lessonId: lesson.id,
-          topic: quiz.topic.trim(),
-          description: quiz.description.trim(),
-          tags: quiz.tags,
-          questions: quiz.questions,
-        },
-      })),
-    ]);
+    }));
 
     const nextContent = hasLegacy ? [...flattened, ...legacyBlocks] : flattened;
 
@@ -599,8 +662,8 @@ const CourseContents: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/70">
-      <div className="max-w-350 mx-auto px-4 md:px-8 py-8 space-y-6">
+    <div className="min-h-screen bg-slate-50/70 flex flex-col">
+      <div className="flex-1 min-h-0 max-w-350 mx-auto px-4 md:px-8 py-8 flex flex-col gap-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <Link
@@ -680,7 +743,7 @@ const CourseContents: React.FC = () => {
 
         <div
           ref={containerRef}
-          className="relative flex min-h-[70vh] rounded-3xl border border-white/70 bg-white/80 shadow-soft overflow-hidden"
+          className="relative flex flex-1 min-h-0 rounded-3xl border border-white/70 bg-white/80 shadow-soft overflow-hidden"
         >
           {isSidebarOpen && (
             <div
@@ -804,7 +867,7 @@ const CourseContents: React.FC = () => {
               <div className="border-t border-slate-200 pt-3">
                 <button
                   type="button"
-                  onClick={addLesson}
+                  onClick={() => addLesson()}
                   className="w-full rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 transition"
                 >
                   {sidebarCollapsed ? "+" : "+ New lesson"}
@@ -813,59 +876,21 @@ const CourseContents: React.FC = () => {
             </div>
           </aside>
 
-          <main className="flex-1 min-w-0 p-6 md:p-10 space-y-6">
+          <main className="flex-1 min-w-0 min-h-0 p-6 md:p-10 space-y-6 overflow-y-auto">
             {activeLesson ? (
               <>
-                <div className="space-y-4">
-                  <input
-                    value={activeLesson.title}
-                    onChange={(event) =>
-                      updateLesson(activeLesson.id, {
-                        title: event.target.value,
-                      })
-                    }
-                    className="w-full text-3xl md:text-4xl font-semibold text-slate-900 bg-transparent focus:outline-none"
-                    placeholder="Lesson title"
-                  />
-                  <textarea
-                    value={activeLesson.description}
-                    onChange={(event) =>
-                      updateLesson(activeLesson.id, {
-                        description: event.target.value,
-                      })
-                    }
-                    className="w-full resize-none rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-600 focus:border-emerald-400 focus:outline-none"
-                    rows={2}
-                    placeholder="Lesson description"
-                  />
-                </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                        Lesson Editor
-                      </p>
-                      <p className="text-sm text-slate-500">
-                        Type / to insert blocks, images, or lists.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => removeLesson(activeLesson.id)}
-                      className="text-xs uppercase font-semibold text-rose-500"
-                    >
-                      Delete lesson
-                    </button>
-                  </div>
-                  <Editor
-                    key={activeLesson.id}
-                    content={activeLesson.content}
-                    onChange={(next) =>
+                <LessonBasics
+                  lesson={activeLesson}
+                  onUpdate={(updates) => updateLesson(activeLesson.id, updates)}
+                />
+                  <ContentLessonEditor
+                    lesson={activeLesson}
+                    onDelete={() => removeLesson(activeLesson.id)}
+                    onChangeContent={(next) =>
                       updateLesson(activeLesson.id, { content: next })
                     }
+                    onAddQuiz={() => openQuizBuilder(activeLesson)}
                   />
-                </div>
               </>
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">

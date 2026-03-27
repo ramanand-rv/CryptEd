@@ -66,10 +66,41 @@ const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks }) => {
         // Will implement later
         return (
           <View key={index} style={styles.quizPlaceholder}>
-            <Text>Quiz block (to be implemented)</Text>
+            <Text style={styles.lessonTitle}>
+              {block.attrs?.title || "Quiz"}
+            </Text>
+            {block.attrs?.description ? (
+              <Text style={styles.lessonDescription}>
+                {block.attrs.description}
+              </Text>
+            ) : null}
+            <Text style={styles.quizMeta}>
+              {(block.attrs?.questions || []).length} questions
+            </Text>
           </View>
         );
       case "lesson":
+        if (block.attrs?.kind === "quiz" || block.attrs?.quiz) {
+          const quizPayload = block.attrs.quiz || {};
+          const questions = Array.isArray(quizPayload.questions)
+            ? quizPayload.questions
+            : [];
+          return (
+            <View key={index} style={styles.quizPlaceholder}>
+              <Text style={styles.lessonTitle}>
+                {block.attrs?.title || quizPayload.topic || "Quiz"}
+              </Text>
+              {block.attrs?.description || quizPayload.description ? (
+                <Text style={styles.lessonDescription}>
+                  {block.attrs?.description || quizPayload.description}
+                </Text>
+              ) : null}
+              <Text style={styles.quizMeta}>
+                {questions.length} questions
+              </Text>
+            </View>
+          );
+        }
         const lessonBlocks = Array.isArray(block.attrs?.content?.content)
           ? block.attrs.content.content
           : [];
@@ -122,6 +153,11 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: "#f0f0f0",
     marginVertical: 8,
+  },
+  quizMeta: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#64748b",
   },
   lessonBlock: {
     padding: 16,

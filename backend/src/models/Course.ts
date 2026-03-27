@@ -15,6 +15,7 @@ export interface ICourse extends Document {
   price: number; // in lamports
   content: IContentBlock[]; // array of blocks
   nftMetadataUri?: string; // IPFS URI for NFT image/metadata
+  status: "draft" | "published";
   views: number;
   reviews: Array<{
     userId?: mongoose.Types.ObjectId;
@@ -41,6 +42,7 @@ const CourseSchema: Schema = new Schema(
     price: { type: Number, required: true, default: 0 },
     content: { type: Array, required: true, default: [] },
     nftMetadataUri: { type: String },
+    status: { type: String, enum: ["draft", "published"], default: "draft" },
     views: { type: Number, default: 0 },
     reviews: [
       {

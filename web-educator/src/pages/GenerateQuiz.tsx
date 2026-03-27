@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
@@ -13,11 +13,20 @@ const GenerateQuiz: React.FC = () => {
   const { id } = useParams();
   const { token } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const queryParams = useMemo(
+    () => new URLSearchParams(location.search),
+    [location.search],
+  );
+  const returnTo = queryParams.get("returnTo") || `/courses/${id}/contents`;
+  const lessonId = queryParams.get("lessonId") || "";
 
   const [loading, setLoading] = useState(true);
-  const [course, setCourse] = useState<any>(null);
-  const [topic, setTopic] = useState("");
-  const [description, setDescription] = useState("");
+  const [topic, setTopic] = useState(queryParams.get("topic") || "");
+  const [description, setDescription] = useState(
+    queryParams.get("description") || "",
+  );
   const [tags, setTags] = useState("");
   const [numQuestions, setNumQuestions] = useState(5);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
@@ -31,7 +40,6 @@ const GenerateQuiz: React.FC = () => {
         const res = await api.get(`/courses/${id}`, {
           headers: token ? { "x-auth-token": token } : undefined,
         });
-        setCourse(res.data);
         setTopic((prev) => prev || res.data?.title || "");
         setDescription((prev) => prev || res.data?.description || "");
       } catch (err) {
@@ -91,51 +99,79 @@ const GenerateQuiz: React.FC = () => {
     }
   };
 
-  const handleAddToCourse = async () => {
+  const addQuestion = () => {
+    setQuestions((prev) => [
+      ...prev,
+      { question: "", options: ["", "", "", ""], correct: 0 },
+    ]);
+  };
+
+  const updateQuestion = (index: number, updates: Partial<QuizQuestion>) => {
+    setQuestions((prev) =>
+      prev.map((question, qIndex) =>
+        qIndex === index ? { ...question, ...updates } : question,
+      ),
+    );
+  };
+
+  const updateOption = (
+    index: number,
+    optionIndex: number,
+    value: string,
+  ) => {
+    setQuestions((prev) =>
+      prev.map((question, qIndex) => {
+        if (qIndex !== index) return question;
+        const nextOptions = question.options.length
+          ? [...question.options]
+          : ["", "", "", ""];
+        nextOptions[optionIndex] = value;
+        return { ...question, options: nextOptions };
+      }),
+    );
+  };
+
+  const removeQuestion = (index: number) => {
+    setQuestions((prev) => prev.filter((_, qIndex) => qIndex !== index));
+  };
+
+  const handleSaveQuiz = () => {
     if (!id) return;
-    if (!course) {
-      setError("Course details are missing. Please reload the page.");
+    if (!lessonId) {
+      setError("Select a lesson to attach this quiz.");
+      return;
+    }
+    if (!topic.trim() || !description.trim()) {
+      setError("Please provide a quiz title and description.");
       return;
     }
     if (!questions.length) {
-      setError("Generate a quiz before adding it to the course.");
+      setError("Generate or add at least one question.");
       return;
     }
 
     setSaving(true);
     setError(null);
 
-    const quizBlock = {
-      type: "quiz",
-      attrs: {
-        topic: topic.trim(),
+    const payload = {
+      lessonId,
+      quiz: {
+        title: topic.trim(),
         description: description.trim(),
         tags: tagList,
         questions,
       },
     };
 
-    const existingContent = course?.content;
-    const updatedContent = Array.isArray(existingContent)
-      ? [...existingContent, quizBlock]
-      : existingContent && Array.isArray(existingContent.content)
-        ? { ...existingContent, content: [...existingContent.content, quizBlock] }
-        : [quizBlock];
-
     try {
-      await api.put(
-        `/courses/${id}`,
-        { content: updatedContent },
-        { headers: { "x-auth-token": token } },
+      window.localStorage.setItem(
+        `pending-quiz:${id}`,
+        JSON.stringify(payload),
       );
-      navigate(`/courses/${id}`);
+      navigate(returnTo);
     } catch (err: any) {
       console.error(err);
-      const message =
-        err?.response?.data?.msg ||
-        err?.response?.data?.error ||
-        "Failed to add quiz to course.";
-      setError(message);
+      setError("Failed to save the quiz. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -154,25 +190,25 @@ const GenerateQuiz: React.FC = () => {
       <div className="max-w-6xl mx-auto space-y-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <Link to={`/courses/${id}`} className="text-xs uppercase text-emerald-600">
-              Back to course dashboard
+            <Link to={returnTo} className="text-xs uppercase text-emerald-600">
+              Back to lesson editor
             </Link>
             <h1 className="text-3xl md:text-4xl font-semibold text-slate-900 mt-2">
-              Generate an AI quiz
+              Build a quiz
             </h1>
             <p className="text-sm text-slate-600 mt-2 max-w-2xl">
-              Define the topic, learning focus, and tags. We will draft a quiz you
-              can review before adding to the course.
+              Define the quiz and refine the questions before inserting it into
+              your lesson.
             </p>
           </div>
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={handleAddToCourse}
-              disabled={saving || questions.length === 0 || !course}
+              onClick={handleSaveQuiz}
+              disabled={saving || questions.length === 0}
               className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-60"
             >
-              {saving ? "Adding..." : "Add quiz to course"}
+              {saving ? "Saving..." : "Save quiz"}
             </button>
           </div>
         </div>
@@ -267,45 +303,77 @@ const GenerateQuiz: React.FC = () => {
           <section className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase text-slate-400">Preview</p>
+                <p className="text-xs uppercase text-slate-400">Questions</p>
                 <h2 className="text-lg font-semibold text-slate-900 mt-1">
-                  Review the quiz
+                  Review and edit
                 </h2>
               </div>
-              {questions.length > 0 && (
-                <span className="text-sm text-emerald-700">
-                  {questions.length} questions
-                </span>
-              )}
+              <button
+                type="button"
+                onClick={addQuestion}
+                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-300 transition"
+              >
+                + Add question
+              </button>
             </div>
 
             {questions.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
-                Generate a quiz to preview the questions here.
+                Generate a quiz to draft questions here.
               </div>
             ) : (
               <div className="space-y-5">
                 {questions.map((q, index) => (
                   <div
-                    key={`${q.question}-${index}`}
-                    className="rounded-2xl border border-slate-100 bg-white p-4"
+                    key={`${index}-${q.question}`}
+                    className="rounded-2xl border border-slate-100 bg-white p-4 space-y-3"
                   >
-                    <p className="text-sm font-semibold text-slate-900">
-                      {index + 1}. {q.question}
-                    </p>
-                    <div className="mt-3 space-y-2">
-                      {q.options.map((option, optionIndex) => (
-                        <div
-                          key={`${option}-${optionIndex}`}
-                          className={`rounded-xl border px-3 py-2 text-sm ${
-                            optionIndex === q.correct
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                              : "border-slate-100 text-slate-600"
-                          }`}
-                        >
-                          {option}
-                        </div>
-                      ))}
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs uppercase text-slate-400">
+                        Question {index + 1}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => removeQuestion(index)}
+                        className="text-xs font-semibold uppercase text-rose-500"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <input
+                      value={q.question}
+                      onChange={(event) =>
+                        updateQuestion(index, { question: event.target.value })
+                      }
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                      placeholder="Enter the question"
+                    />
+                    <div className="space-y-2">
+                      {(q.options.length ? q.options : ["", "", "", ""]).map(
+                        (option, optionIndex) => (
+                          <div
+                            key={`${index}-${optionIndex}`}
+                            className="flex items-center gap-3"
+                          >
+                            <input
+                              type="radio"
+                              name={`correct-${index}`}
+                              checked={q.correct === optionIndex}
+                              onChange={() =>
+                                updateQuestion(index, { correct: optionIndex })
+                              }
+                            />
+                            <input
+                              value={option}
+                              onChange={(event) =>
+                                updateOption(index, optionIndex, event.target.value)
+                              }
+                              className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                              placeholder={`Option ${optionIndex + 1}`}
+                            />
+                          </div>
+                        ),
+                      )}
                     </div>
                   </div>
                 ))}

@@ -10,6 +10,7 @@ interface Course {
   price: number;
   createdAt: string;
   views?: number;
+  status?: "draft" | "published";
 }
 
 interface MetricPoint {
@@ -90,7 +91,7 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const res = await api.get("/courses", {
+        const res = await api.get("/courses/educator", {
           headers: { "x-auth-token": token },
         });
         const myCourses = res.data.filter(
@@ -365,8 +366,14 @@ const Dashboard: React.FC = () => {
                   className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft transition hover:-translate-y-1 hover:shadow-xl"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs uppercase tracking-[0.2em] text-emerald-600">
-                      Course
+                    <span
+                      className={`text-xs uppercase tracking-[0.2em] ${
+                        course.status === "draft"
+                          ? "text-slate-500"
+                          : "text-emerald-600"
+                      }`}
+                    >
+                      {course.status === "draft" ? "Draft" : "Published"}
                     </span>
                     <span className="text-xs text-slate-400">
                       {new Date(course.createdAt).toLocaleDateString()}

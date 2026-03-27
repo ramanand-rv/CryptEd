@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import Editor from "../components/Editor";
-import type { JSONContent } from "@tiptap/react";
 import { api } from "../lib/api";
 
 const CreateCourse: React.FC = () => {
@@ -12,24 +10,22 @@ const CreateCourse: React.FC = () => {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState<number>(0);
-  const [content, setContent] = useState<JSONContent>({
-    type: "doc",
-    content: [{ type: "paragraph" }],
-  });
   const [nftMetadataUri, setNftMetadataUri] = useState("");
   const [rewardPoolAmount, setRewardPoolAmount] = useState<number>(0);
   const [rewardWinners, setRewardWinners] = useState<number>(0);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting] = useState<"draft" | "published" | null>(
+    null,
+  );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
+  const handleCreate = async (status: "draft" | "published") => {
+    setSubmitting(status);
 
     const courseData = {
       title,
       description,
       price: price * 1e9,
-      content,
+      content: [],
+      status,
       nftMetadataUri: nftMetadataUri || undefined,
       rewardPool:
         rewardPoolAmount > 0
@@ -41,45 +37,20 @@ const CreateCourse: React.FC = () => {
     };
 
     try {
-      await api.post("/courses", courseData, {
+      const res = await api.post("/courses", courseData, {
         headers: { "x-auth-token": token },
       });
-      navigate("/dashboard");
+      const courseId = res.data?._id;
+      if (courseId) {
+        navigate(`/courses/${courseId}/contents`);
+      } else {
+        navigate("/dashboard");
+      }
     } catch (err) {
       console.error(err);
       alert("Failed to create course. Please check the console for details.");
     } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleGenerateQuiz = async () => {
-    if (!title || !description) {
-      alert("Please enter a title and description first");
-      return;
-    }
-
-    try {
-      const res = await api.post(
-        "/courses/generate-quiz",
-        { topic: title, description, numQuestions: 5 },
-        { headers: { "x-auth-token": token } },
-      );
-
-      const quizBlock = {
-        type: "quiz",
-        attrs: { questions: res.data.questions },
-      };
-
-      setContent((prev) => ({
-        ...prev,
-        content: [...(prev.content || []), quizBlock],
-      }));
-
-      alert("Quiz block added to the end of the content.");
-    } catch (err) {
-      console.error(err);
-      alert("Failed to generate quiz. Please try again.");
+      setSubmitting(null);
     }
   };
 
@@ -88,40 +59,53 @@ const CreateCourse: React.FC = () => {
       <div className="max-w-6xl mx-auto space-y-10">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <Link to="/dashboard" className="text-xs uppercase text-emerald-600">
+            <Link
+              to="/dashboard"
+              className="text-xs uppercase text-emerald-600"
+            >
               Back to dashboard
             </Link>
             <h1 className="text-3xl md:text-4xl font-semibold text-slate-900 mt-2">
               Create a new course
             </h1>
             <p className="text-sm text-slate-600 mt-2 max-w-2xl">
-              Design an experience that feels as polished as a modern workspace.
-              Mix rich content, quizzes, and on-chain rewards in one flow.
+              Start with the essentials. You will add lessons and content after
+              creating the course.
             </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
-              type="button"
-              onClick={handleGenerateQuiz}
-              className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition"
+              type="submit"
+              form="create-course"
+              value="draft"
+              disabled={submitting !== null}
+              className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 transition disabled:opacity-70"
             >
-              Generate AI quiz
+              {submitting === "draft" ? "Saving..." : "Save draft"}
             </button>
             <button
               type="submit"
               form="create-course"
-              disabled={submitting}
+              value="published"
+              disabled={submitting !== null}
               className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-70"
             >
-              {submitting ? "Creating..." : "Publish course"}
+              {submitting === "published" ? "Publishing..." : "Publish course"}
             </button>
           </div>
         </div>
 
         <form
           id="create-course"
-          onSubmit={handleSubmit}
-          className="grid lg:grid-cols-[0.9fr_1.1fr] gap-8 items-start"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const submitter = (event.nativeEvent as SubmitEvent)
+              .submitter as HTMLButtonElement | null;
+            const intent =
+              submitter?.value === "published" ? "published" : "draft";
+            handleCreate(intent);
+          }}
+          className="grid lg:grid-cols-[0.9fr] gap-8 items-start"
         >
           <div className="space-y-6">
             <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft">
@@ -250,21 +234,6 @@ const CreateCourse: React.FC = () => {
                 </div>
               </div>
             </div>
-          </div>
-
-          <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-900">
-                  Course content
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Use headings, images, videos, and quizzes to structure the
-                  experience.
-                </p>
-              </div>
-            </div>
-            <Editor content={content} onChange={setContent} />
           </div>
         </form>
       </div>

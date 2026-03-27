@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { JSONContent } from "@tiptap/react";
 import Editor from "../components/Editor";
 import { useAuth } from "../context/AuthContext";
@@ -15,6 +15,7 @@ const CourseLessonEditor: React.FC = () => {
   const { id, lessonId } = useParams();
   const { token } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [loading, setLoading] = useState(true);
   const [lessonTitle, setLessonTitle] = useState("");
@@ -65,6 +66,47 @@ const CourseLessonEditor: React.FC = () => {
       fetchLesson();
     }
   }, [id, lessonId, token]);
+
+  useEffect(() => {
+    if (!id || !lessonId) return;
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(`pending-quiz:${id}`);
+    if (!raw) return;
+
+    try {
+      const pending = JSON.parse(raw) as {
+        lessonId: string;
+        quiz: {
+          title: string;
+          description: string;
+          tags: string[];
+          questions: any[];
+        };
+      };
+      if (pending.lessonId !== lessonId) return;
+      setContent((prev) => ({
+        ...prev,
+        content: [
+          ...(Array.isArray(prev.content) ? prev.content : []),
+          { type: "quiz", attrs: pending.quiz },
+        ],
+      }));
+      window.localStorage.removeItem(`pending-quiz:${id}`);
+    } catch (err) {
+      console.error("Failed to apply pending quiz", err);
+    }
+  }, [id, lessonId]);
+
+  const openQuizBuilder = () => {
+    if (!id || !lessonId) return;
+    const params = new URLSearchParams({
+      lessonId,
+      returnTo: `${location.pathname}${location.search}`,
+      topic: lessonTitle || "",
+      description: lessonDescription || "",
+    });
+    navigate(`/courses/${id}/quiz?${params.toString()}`);
+  };
 
   const handleSave = async () => {
     if (!id || !lessonId) return;
@@ -190,7 +232,11 @@ const CourseLessonEditor: React.FC = () => {
                 Use the editor to add text, images, video links, and structure.
               </p>
             </div>
-            <Editor content={content} onChange={setContent} />
+            <Editor
+              content={content}
+              onChange={setContent}
+              onAddQuiz={openQuizBuilder}
+            />
           </div>
         </div>
       </div>

@@ -14,6 +14,7 @@ interface EditorProps {
   content: JSONContent;
   onChange: (content: JSONContent) => void;
   onAddQuiz?: () => void;
+  onEditQuiz?: (quiz: QuizNodeAttrs) => void;
 }
 
 interface SlashPosition {
@@ -34,6 +35,14 @@ interface CommandItem {
   action: (editor: ReturnType<typeof useEditor>) => void;
 }
 
+interface QuizNodeAttrs {
+  id?: string;
+  title: string;
+  description: string;
+  tags: string[];
+  questions: any[];
+}
+
 const QuizNode = Node.create({
   name: "quiz",
   group: "block",
@@ -42,6 +51,7 @@ const QuizNode = Node.create({
   draggable: true,
   addAttributes() {
     return {
+      id: { default: "" },
       title: { default: "Quiz" },
       description: { default: "" },
       tags: { default: [] },
@@ -71,6 +81,7 @@ const QuizNode = Node.create({
       "div",
       mergeAttributes(HTMLAttributes, {
         "data-type": "quiz",
+        "data-quiz-id": node.attrs.id || "",
         class: "quiz-node",
       }),
       ...children,
@@ -78,7 +89,12 @@ const QuizNode = Node.create({
   },
 });
 
-const Editor: React.FC<EditorProps> = ({ content, onChange, onAddQuiz }) => {
+const Editor: React.FC<EditorProps> = ({
+  content,
+  onChange,
+  onAddQuiz,
+  onEditQuiz,
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const filteredCommandsRef = useRef<CommandItem[]>([]);
   const slashOpenRef = useRef(false);
@@ -178,19 +194,50 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, onAddQuiz }) => {
         }
         return false;
       },
+      handleClick: (view, pos, event) => {
+        if (!onEditQuiz) return false;
+        const target = event.target as HTMLElement | null;
+        if (!target) return false;
+        const quizElement = target.closest?.("[data-type='quiz']");
+        if (!quizElement) return false;
+
+        try {
+          const directNode =
+            view.state.doc.nodeAt(pos) || view.state.doc.nodeAt(Math.max(pos - 1, 0));
+          const node =
+            directNode?.type?.name === "quiz"
+              ? directNode
+              : view.state.doc.nodeAt(view.posAtDOM(quizElement, 0));
+          if (!node || node.type.name !== "quiz") return false;
+          const attrs = node.attrs as QuizNodeAttrs;
+          event.preventDefault();
+          onEditQuiz({
+            id: attrs.id,
+            title: attrs.title || "Quiz",
+            description: attrs.description || "",
+            tags: Array.isArray(attrs.tags) ? attrs.tags : [],
+            questions: Array.isArray(attrs.questions) ? attrs.questions : [],
+          });
+          return true;
+        } catch (err) {
+          console.error("Unable to open quiz editor", err);
+          return false;
+        }
+      },
     },
   });
 
   if (!editor) return null;
 
-  const commands: CommandItem[] = useMemo(
-    () => [
+  const commands: CommandItem[] = useMemo(() => {
+    const base: CommandItem[] = [
       {
         id: "text",
         label: "Text",
         description: "Start writing with plain text.",
         keywords: ["paragraph", "plain"],
-        action: (editorInstance) => editorInstance?.chain().focus().setParagraph().run(),
+        action: (editorInstance) =>
+          editorInstance?.chain().focus().setParagraph().run(),
       },
       {
         id: "heading-1",
@@ -261,7 +308,8 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, onAddQuiz }) => {
         label: "Divider",
         description: "Insert a horizontal rule.",
         keywords: ["hr", "separator"],
-        action: (editorInstance) => editorInstance?.chain().focus().setHorizontalRule().run(),
+        action: (editorInstance) =>
+          editorInstance?.chain().focus().setHorizontalRule().run(),
       },
       {
         id: "image",
@@ -280,7 +328,8 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, onAddQuiz }) => {
         keywords: ["video", "youtube"],
         action: (editorInstance) => {
           const url = window.prompt("Enter YouTube URL");
-          if (url) editorInstance?.chain().focus().setYoutubeVideo({ src: url }).run();
+          if (url)
+            editorInstance?.chain().focus().setYoutubeVideo({ src: url }).run();
         },
       },
       {
@@ -300,9 +349,20 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, onAddQuiz }) => {
           }
         },
       },
-    ],
-    [],
-  );
+    ];
+
+    if (onAddQuiz) {
+      base.push({
+        id: "quiz",
+        label: "Quiz",
+        description: "Insert a quiz card and edit the questions.",
+        keywords: ["quiz", "assessment", "questions"],
+        action: () => onAddQuiz(),
+      });
+    }
+
+    return base;
+  }, [onAddQuiz]);
 
   const filteredCommands = useMemo(() => {
     const query = slashQuery.trim().toLowerCase();
@@ -391,6 +451,12 @@ const Editor: React.FC<EditorProps> = ({ content, onChange, onAddQuiz }) => {
             background: #f8fafc;
             padding: 14px 16px;
             margin: 12px 0;
+            cursor: pointer;
+            transition: border-color 150ms ease, background 150ms ease;
+          }
+          .editor-container .quiz-node:hover {
+            border-color: #cbd5e1;
+            background: #f1f5f9;
           }
           .editor-container .quiz-node__title {
             font-weight: 600;

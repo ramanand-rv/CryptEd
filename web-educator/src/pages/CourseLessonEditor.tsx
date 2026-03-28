@@ -11,6 +11,45 @@ const defaultContent: JSONContent = {
   content: [{ type: "paragraph" }],
 };
 
+interface QuizPayload {
+  id?: string;
+  title: string;
+  description: string;
+  tags: string[];
+  questions: any[];
+}
+
+const createId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const pendingQuizKey = (courseId: string) => `pending-quiz:${courseId}`;
+const editingQuizKey = (courseId: string) => `edit-quiz:${courseId}`;
+
+const upsertQuizBlock = (content: JSONContent, quiz: QuizPayload): JSONContent => {
+  const existingBlocks = Array.isArray(content.content) ? content.content : [];
+  const quizId = quiz.id?.trim() ? quiz.id : createId();
+  let replaced = false;
+
+  const nextBlocks = existingBlocks.map((block: any) => {
+    if (block?.type === "quiz" && block?.attrs?.id === quizId) {
+      replaced = true;
+      return { ...block, attrs: { ...quiz, id: quizId } };
+    }
+    return block;
+  });
+
+  if (!replaced) {
+    nextBlocks.push({ type: "quiz", attrs: { ...quiz, id: quizId } });
+  }
+
+  return {
+    ...content,
+    content: nextBlocks,
+  };
+};
+
 const CourseLessonEditor: React.FC = () => {
   const { id, lessonId } = useParams();
   const { token } = useAuth();
@@ -70,41 +109,40 @@ const CourseLessonEditor: React.FC = () => {
   useEffect(() => {
     if (!id || !lessonId) return;
     if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(`pending-quiz:${id}`);
+    const raw = window.localStorage.getItem(pendingQuizKey(id));
     if (!raw) return;
 
     try {
-      const pending = JSON.parse(raw) as {
-        lessonId: string;
-        quiz: {
-          title: string;
-          description: string;
-          tags: string[];
-          questions: any[];
-        };
-      };
+      const pending = JSON.parse(raw) as { lessonId: string; quiz: QuizPayload };
       if (pending.lessonId !== lessonId) return;
-      setContent((prev) => ({
-        ...prev,
-        content: [
-          ...(Array.isArray(prev.content) ? prev.content : []),
-          { type: "quiz", attrs: pending.quiz },
-        ],
-      }));
-      window.localStorage.removeItem(`pending-quiz:${id}`);
+      setContent((prev) => upsertQuizBlock(prev, pending.quiz));
+      window.localStorage.removeItem(pendingQuizKey(id));
     } catch (err) {
       console.error("Failed to apply pending quiz", err);
     }
   }, [id, lessonId]);
 
-  const openQuizBuilder = () => {
+  const openQuizBuilder = (quiz?: QuizPayload) => {
     if (!id || !lessonId) return;
+    if (typeof window !== "undefined") {
+      if (quiz) {
+        window.localStorage.setItem(
+          editingQuizKey(id),
+          JSON.stringify({ lessonId, quiz }),
+        );
+      } else {
+        window.localStorage.removeItem(editingQuizKey(id));
+      }
+    }
     const params = new URLSearchParams({
       lessonId,
       returnTo: `${location.pathname}${location.search}`,
       topic: lessonTitle || "",
       description: lessonDescription || "",
     });
+    if (quiz) {
+      params.set("mode", "edit");
+    }
     navigate(`/courses/${id}/quiz?${params.toString()}`);
   };
 
@@ -235,7 +273,8 @@ const CourseLessonEditor: React.FC = () => {
             <Editor
               content={content}
               onChange={setContent}
-              onAddQuiz={openQuizBuilder}
+              onAddQuiz={() => openQuizBuilder()}
+              onEditQuiz={(quiz) => openQuizBuilder(quiz)}
             />
           </div>
         </div>

@@ -118,11 +118,17 @@ const LessonRow: React.FC<LessonRowProps> = ({
               >
                 {lesson.title || "Untitled lesson"}
               </p>
-              {!isCollapsed && lesson.description && (
+              <div
+                className={`overflow-hidden transition-[max-height,opacity] duration-300 ease-in-out ${
+                  !isCollapsed && lesson.description
+                    ? "max-h-10 opacity-100"
+                    : "max-h-0 opacity-0"
+                }`}
+              >
                 <p className="text-xs text-slate-400 truncate">
                   {lesson.description}
                 </p>
-              )}
+              </div>
             </div>
           )}
         </div>

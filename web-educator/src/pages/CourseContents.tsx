@@ -93,6 +93,9 @@ const CourseContents: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [loadStatus, setLoadStatus] = useState<
+    "loading" | "server" | "local" | "error"
+  >("loading");
   const [courseTitle, setCourseTitle] = useState("");
   const [courseStatus, setCourseStatus] = useState<"draft" | "published">(
     "draft",
@@ -117,6 +120,7 @@ const CourseContents: React.FC = () => {
   const [hydrated, setHydrated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const canSync = loadStatus === "server";
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -125,6 +129,7 @@ const CourseContents: React.FC = () => {
   useEffect(() => {
     const fetchCourse = async () => {
       if (!id) return;
+      setLoadStatus("loading");
       try {
         const res = await api.get(`/courses/${id}`, {
           headers: token ? { "x-auth-token": token } : undefined,
@@ -196,12 +201,40 @@ const CourseContents: React.FC = () => {
 
         setLegacyBlocks(extras);
         setHasLegacy(legacyDetected);
+        setError(null);
+        setLoadStatus("server");
+        setHydrated(true);
       } catch (err) {
         console.error(err);
-        setError("Unable to load course contents.");
+        const stored = loadStoredState(id);
+        if (stored?.lessons?.length) {
+          const normalizedLessons = stored.lessons.map((lesson) => ({
+            ...lesson,
+            description: lesson.description || "",
+            content: lesson.content || DEFAULT_CONTENT,
+          }));
+          setLessons(normalizedLessons);
+          setCollapsedLessonIds(new Set(stored.collapsedLessonIds || []));
+          const storedWidth = stored.sidebarWidth || 320;
+          const clampedWidth = Math.min(
+            Math.max(storedWidth, SIDEBAR_MIN),
+            SIDEBAR_MAX,
+          );
+          setSidebarWidth(clampedWidth);
+          setSidebarCollapsed(Boolean(stored.sidebarCollapsed));
+          setSelectedLessonId(
+            stored.selectedLessonId || normalizedLessons[0]?.id || null,
+          );
+          setLoadStatus("local");
+          setHydrated(true);
+          setError("Offline: loaded your local draft. Sync is disabled.");
+        } else {
+          setLoadStatus("error");
+          setHydrated(false);
+          setError("Unable to load course contents. Please check your connection.");
+        }
       } finally {
         setLoading(false);
-        setHydrated(true);
       }
     };
 
@@ -405,6 +438,10 @@ const CourseContents: React.FC = () => {
 
   const handleSyncToCourse = async () => {
     if (!id) return;
+    if (!canSync) {
+      setError("Offline: reconnect and refresh before syncing to the server.");
+      return;
+    }
     setIsSyncing(true);
     setError(null);
 
@@ -440,6 +477,10 @@ const CourseContents: React.FC = () => {
 
   const handlePublishCourse = async () => {
     if (!id || courseStatus === "published") return;
+    if (!canSync) {
+      setError("Offline: reconnect and refresh before publishing.");
+      return;
+    }
     setIsSyncing(true);
     setError(null);
 
@@ -515,7 +556,12 @@ const CourseContents: React.FC = () => {
             <button
               type="button"
               onClick={handleSyncToCourse}
-              disabled={isSyncing}
+              disabled={isSyncing || !canSync}
+              title={
+                canSync
+                  ? undefined
+                  : "Offline: reconnect and refresh before syncing"
+              }
               className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-60"
             >
               {isSyncing
@@ -528,7 +574,12 @@ const CourseContents: React.FC = () => {
               <button
                 type="button"
                 onClick={handlePublishCourse}
-                disabled={isSyncing}
+                disabled={isSyncing || !canSync}
+                title={
+                  canSync
+                    ? undefined
+                    : "Offline: reconnect and refresh before publishing"
+                }
                 className="rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
               >
                 Publish course

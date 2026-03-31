@@ -10,6 +10,7 @@ const CourseSettings: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +67,30 @@ const CourseSettings: React.FC = () => {
       setError("Failed to update course settings.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!id) return;
+    const confirmed = window.confirm(
+      "Delete this course? This action cannot be undone.",
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await api.delete(`/courses/${id}`, {
+        headers: { "x-auth-token": token },
+      });
+      navigate("/dashboard");
+    } catch (err) {
+      console.error(err);
+      setError("Failed to delete course.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -145,10 +170,18 @@ const CourseSettings: React.FC = () => {
               placeholder="Describe what learners will gain from this course."
             />
           </div>
-          <div className="flex items-center justify-end">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting || saving}
+              className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 transition disabled:opacity-60"
+            >
+              {deleting ? "Deleting..." : "Delete course"}
+            </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || deleting}
               className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save settings"}

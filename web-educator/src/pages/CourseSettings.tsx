@@ -11,6 +11,8 @@ const CourseSettings: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -72,10 +74,10 @@ const CourseSettings: React.FC = () => {
 
   const handleDelete = async () => {
     if (!id) return;
-    const confirmed = window.confirm(
-      "Delete this course? This action cannot be undone.",
-    );
-    if (!confirmed) return;
+    if (!title.trim()) {
+      setError("Course title is required before deleting.");
+      return;
+    }
 
     setDeleting(true);
     setError(null);
@@ -91,6 +93,8 @@ const CourseSettings: React.FC = () => {
       setError("Failed to delete course.");
     } finally {
       setDeleting(false);
+      setShowDeleteConfirm(false);
+      setDeleteConfirmText("");
     }
   };
 
@@ -173,7 +177,7 @@ const CourseSettings: React.FC = () => {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <button
               type="button"
-              onClick={handleDelete}
+              onClick={() => setShowDeleteConfirm(true)}
               disabled={deleting || saving}
               className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 transition disabled:opacity-60"
             >
@@ -189,6 +193,71 @@ const CourseSettings: React.FC = () => {
           </div>
         </form>
       </div>
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Confirm deletion
+                </h2>
+                <p className="text-sm text-slate-600 mt-2">
+                  This action cannot be undone. To confirm, type{" "}
+                  <span className="font-semibold text-slate-900">
+                    {title || "this course"}
+                  </span>{" "}
+                  below.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeleteConfirmText("");
+                }}
+                className="text-slate-400 hover:text-slate-600"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <input
+                type="text"
+                value={deleteConfirmText}
+                onChange={(event) => setDeleteConfirmText(event.target.value)}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-rose-300 focus:outline-none focus:ring-2 focus:ring-rose-100"
+                placeholder="Type the course name to confirm"
+              />
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeleteConfirmText("");
+                  }}
+                  className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={
+                    deleting ||
+                    deleteConfirmText.trim() !== title.trim() ||
+                    !title.trim()
+                  }
+                  className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 transition disabled:opacity-60"
+                >
+                  {deleting ? "Deleting..." : "Delete course"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

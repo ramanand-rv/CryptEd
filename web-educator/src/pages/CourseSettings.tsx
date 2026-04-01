@@ -1,7 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
+
+interface CourseSettingsSnapshot {
+  title: string;
+  description: string;
+  status: "draft" | "published";
+}
 
 const CourseSettings: React.FC = () => {
   const { id } = useParams();
@@ -12,10 +18,21 @@ const CourseSettings: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(
+    null,
+  );
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<"draft" | "published">("draft");
+  const [initialSnapshot, setInitialSnapshot] = useState<CourseSettingsSnapshot>(
+    {
+      title: "",
+      description: "",
+      status: "draft",
+    },
+  );
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -30,9 +47,19 @@ const CourseSettings: React.FC = () => {
           headers: { "x-auth-token": token },
         });
         const course = res.data?.course;
-        setTitle(course?.title || "");
-        setDescription(course?.description || "");
-        setStatus(course?.status === "published" ? "published" : "draft");
+        const nextTitle = course?.title || "";
+        const nextDescription = course?.description || "";
+        const nextStatus =
+          course?.status === "published" ? "published" : "draft";
+
+        setTitle(nextTitle);
+        setDescription(nextDescription);
+        setStatus(nextStatus);
+        setInitialSnapshot({
+          title: nextTitle.trim(),
+          description: nextDescription.trim(),
+          status: nextStatus,
+        });
       } catch (err) {
         console.error(err);
         setError("Unable to load course settings.");
@@ -43,6 +70,23 @@ const CourseSettings: React.FC = () => {
 
     fetchCourse();
   }, [id, token]);
+
+  const hasUnsavedChanges = useMemo(() => {
+    return (
+      title.trim() !== initialSnapshot.title ||
+      description.trim() !== initialSnapshot.description ||
+      status !== initialSnapshot.status
+    );
+  }, [title, description, status, initialSnapshot]);
+
+  const attemptNavigation = (path: string) => {
+    if (hasUnsavedChanges) {
+      setPendingNavigation(path);
+      setShowUnsavedConfirm(true);
+      return;
+    }
+    navigate(path);
+  };
 
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -56,16 +100,26 @@ const CourseSettings: React.FC = () => {
     setError(null);
     setSuccess(null);
 
+    const normalizedTitle = title.trim();
+    const normalizedDescription = description.trim();
+
     try {
       await api.put(
         `/courses/${id}`,
         {
-          title: title.trim(),
-          description: description.trim(),
+          title: normalizedTitle,
+          description: normalizedDescription,
           status,
         },
         { headers: { "x-auth-token": token } },
       );
+      setTitle(normalizedTitle);
+      setDescription(normalizedDescription);
+      setInitialSnapshot({
+        title: normalizedTitle,
+        description: normalizedDescription,
+        status,
+      });
       setSuccess("Course settings updated.");
     } catch (err) {
       console.error(err);
@@ -116,6 +170,10 @@ const CourseSettings: React.FC = () => {
           <div>
             <Link
               to={`/courses/${id}`}
+              onClick={(event) => {
+                event.preventDefault();
+                attemptNavigation(`/courses/${id}`);
+              }}
               className="text-xs uppercase text-emerald-600"
             >
               Back to course dashboard
@@ -129,7 +187,7 @@ const CourseSettings: React.FC = () => {
           </div>
           <button
             type="button"
-            onClick={() => navigate(`/courses/${id}/contents`)}
+            onClick={() => attemptNavigation(`/courses/${id}/contents`)}
             className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300 transition"
           >
             View course contents
@@ -305,6 +363,60 @@ const CourseSettings: React.FC = () => {
                   {deleting ? "Deleting..." : "Delete course"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showUnsavedConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Unsaved changes
+                </h2>
+                <p className="text-sm text-slate-600 mt-2">
+                  You have unsaved changes. Going back now will discard them.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUnsavedConfirm(false);
+                  setPendingNavigation(null);
+                }}
+                className="text-slate-400 hover:text-slate-600"
+                aria-label="Close"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUnsavedConfirm(false);
+                  setPendingNavigation(null);
+                }}
+                className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 transition"
+              >
+                Continue editing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextPath = pendingNavigation;
+                  setShowUnsavedConfirm(false);
+                  setPendingNavigation(null);
+                  if (nextPath) {
+                    navigate(nextPath);
+                  }
+                }}
+                className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 transition"
+              >
+                Discard and leave
+              </button>
             </div>
           </div>
         </div>

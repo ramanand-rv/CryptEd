@@ -9,6 +9,7 @@ const Profile: React.FC = () => {
   const [walletAddress, setWalletAddress] = useState(
     user?.walletAddress || "",
   );
+  const [about, setAbout] = useState(user?.about || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState("");
@@ -18,6 +19,7 @@ const Profile: React.FC = () => {
   useEffect(() => {
     setName(user?.name || "");
     setWalletAddress(user?.walletAddress || "");
+    setAbout(user?.about || "");
   }, [user]);
 
   const handleProfileSave = async () => {
@@ -26,7 +28,7 @@ const Profile: React.FC = () => {
     try {
       await api.put(
         "/users/me",
-        { name, walletAddress },
+        { name, walletAddress, about },
         { headers: { "x-auth-token": token } },
       );
       await refreshUser();
@@ -121,6 +123,43 @@ const Profile: React.FC = () => {
                 className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-70"
               >
                 {saving ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Educator bio
+              </h2>
+              <p className="text-xs text-slate-500">
+                Share a short description learners will see on your profile.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-slate-700">
+                  About you
+                </label>
+                <textarea
+                  value={about}
+                  onChange={(e) => setAbout(e.target.value)}
+                  rows={5}
+                  maxLength={280}
+                  className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  placeholder="Describe your teaching style, focus areas, or experience."
+                />
+                <p className="mt-2 text-xs text-slate-400">
+                  {about.length}/280 characters
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleProfileSave}
+                className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-emerald-200 hover:text-emerald-700 transition disabled:opacity-70"
+              >
+                {saving ? "Saving..." : "Save bio"}
               </button>
             </div>
           </div>

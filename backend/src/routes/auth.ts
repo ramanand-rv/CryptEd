@@ -31,6 +31,7 @@ router.post("/register/educator", async (req: Request, res: Response) => {
         id: user._id,
         email: user.email,
         name: user.name,
+        about: user.about,
         role: user.role,
         walletAddress: user.walletAddress,
       },
@@ -60,6 +61,7 @@ router.post("/login/educator", async (req: Request, res: Response) => {
         id: user._id,
         email: user.email,
         name: user.name,
+        about: user.about,
         role: user.role,
         walletAddress: user.walletAddress,
       },
@@ -92,6 +94,7 @@ router.post("/login/wallet", async (req: Request, res: Response) => {
         id: user._id,
         walletAddress: user.walletAddress,
         name: user.name,
+        about: user.about,
         role: user.role,
       },
     });

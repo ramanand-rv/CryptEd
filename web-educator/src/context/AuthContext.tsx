@@ -11,6 +11,9 @@ interface User {
   role: string;
   walletAddress?: string;
   about?: string;
+  website?: string;
+  linkedin?: string;
+  twitter?: string;
 }
 
 interface AuthContextType {

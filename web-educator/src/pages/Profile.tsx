@@ -10,6 +10,9 @@ const Profile: React.FC = () => {
     user?.walletAddress || "",
   );
   const [about, setAbout] = useState(user?.about || "");
+  const [website, setWebsite] = useState(user?.website || "");
+  const [linkedin, setLinkedin] = useState(user?.linkedin || "");
+  const [twitter, setTwitter] = useState(user?.twitter || "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState("");
@@ -20,6 +23,9 @@ const Profile: React.FC = () => {
     setName(user?.name || "");
     setWalletAddress(user?.walletAddress || "");
     setAbout(user?.about || "");
+    setWebsite(user?.website || "");
+    setLinkedin(user?.linkedin || "");
+    setTwitter(user?.twitter || "");
   }, [user]);
 
   const handleProfileSave = async () => {
@@ -28,7 +34,7 @@ const Profile: React.FC = () => {
     try {
       await api.put(
         "/users/me",
-        { name, walletAddress, about },
+        { name, walletAddress, about, website, linkedin, twitter },
         { headers: { "x-auth-token": token } },
       );
       await refreshUser();
@@ -160,6 +166,60 @@ const Profile: React.FC = () => {
                 className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-emerald-200 hover:text-emerald-700 transition disabled:opacity-70"
               >
                 {saving ? "Saving..." : "Save bio"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Social links
+              </h2>
+              <p className="text-xs text-slate-500">
+                Add links learners can use to connect with you.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-slate-700">
+                  Website
+                </label>
+                <input
+                  value={website}
+                  onChange={(e) => setWebsite(e.target.value)}
+                  className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  placeholder="https://your-site.com"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700">
+                  LinkedIn
+                </label>
+                <input
+                  value={linkedin}
+                  onChange={(e) => setLinkedin(e.target.value)}
+                  className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  placeholder="https://linkedin.com/in/yourname"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-slate-700">
+                  X (Twitter)
+                </label>
+                <input
+                  value={twitter}
+                  onChange={(e) => setTwitter(e.target.value)}
+                  className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  placeholder="https://x.com/yourname"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleProfileSave}
+                className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-emerald-200 hover:text-emerald-700 transition disabled:opacity-70"
+              >
+                {saving ? "Saving..." : "Save links"}
               </button>
             </div>
           </div>

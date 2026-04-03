@@ -10,6 +10,9 @@ const toSafeUser = (user: any) => ({
   email: user.email,
   name: user.name,
   about: user.about,
+  website: user.website,
+  linkedin: user.linkedin,
+  twitter: user.twitter,
   role: user.role,
   walletAddress: user.walletAddress,
 });
@@ -26,12 +29,15 @@ router.get("/me", auth, async (req: any, res) => {
 
 router.put("/me", auth, async (req: any, res) => {
   try {
-    const { name, walletAddress, about } = req.body;
+    const { name, walletAddress, about, website, linkedin, twitter } = req.body;
     const updates: Record<string, any> = {};
 
     if (name !== undefined) updates.name = name;
     if (walletAddress !== undefined) updates.walletAddress = walletAddress;
     if (about !== undefined) updates.about = about;
+    if (website !== undefined) updates.website = website;
+    if (linkedin !== undefined) updates.linkedin = linkedin;
+    if (twitter !== undefined) updates.twitter = twitter;
 
     const user = await User.findByIdAndUpdate(req.user.userId, updates, {
       new: true,

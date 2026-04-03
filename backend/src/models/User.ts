@@ -7,6 +7,9 @@ export interface IUser extends Document {
   role: "educator" | "learner";
   name?: string;
   about?: string;
+  website?: string;
+  linkedin?: string;
+  twitter?: string;
   purchasedCourses?: mongoose.Types.ObjectId[];
   completedCourses: Array<{
     courseId: mongoose.Types.ObjectId;
@@ -22,6 +25,9 @@ const UserSchema: Schema = new Schema({
   role: { type: String, enum: ["educator", "learner"], required: true },
   name: String,
   about: { type: String, default: "" },
+  website: { type: String, default: "" },
+  linkedin: { type: String, default: "" },
+  twitter: { type: String, default: "" },
   purchasedCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }],
   completedCourses: [{ courseId: Schema.Types.ObjectId, completedAt: Date }],
   ownedNFTs: [String],

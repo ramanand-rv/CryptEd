@@ -1,14 +1,15 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
+import { useWallet } from "@solana/wallet-adapter-react";
+import bs58 from "bs58";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
 const Profile: React.FC = () => {
   const { user, token, refreshUser } = useAuth();
+  const { publicKey, connected, signMessage } = useWallet();
   const [name, setName] = useState(user?.name || "");
-  const [walletAddress, setWalletAddress] = useState(
-    user?.walletAddress || "",
-  );
   const [about, setAbout] = useState(user?.about || "");
   const [website, setWebsite] = useState(user?.website || "");
   const [linkedin, setLinkedin] = useState(user?.linkedin || "");
@@ -16,17 +17,31 @@ const Profile: React.FC = () => {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [status, setStatus] = useState("");
+  const [walletStatus, setWalletStatus] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
+  const [verifyingWallet, setVerifyingWallet] = useState(false);
 
   useEffect(() => {
     setName(user?.name || "");
-    setWalletAddress(user?.walletAddress || "");
     setAbout(user?.about || "");
     setWebsite(user?.website || "");
     setLinkedin(user?.linkedin || "");
     setTwitter(user?.twitter || "");
   }, [user]);
+
+  const connectedAddress = publicKey?.toBase58() || "";
+  const formattedConnectedAddress = useMemo(() => {
+    if (!connectedAddress) return "";
+    return `${connectedAddress.slice(0, 4)}...${connectedAddress.slice(-4)}`;
+  }, [connectedAddress]);
+
+  const isWalletVerified = Boolean(user?.walletVerifiedAt);
+  const isConnectedAndVerified =
+    isWalletVerified && connectedAddress === user?.walletAddress;
 
   const handleProfileSave = async () => {
     setStatus("");
@@ -34,7 +49,7 @@ const Profile: React.FC = () => {
     try {
       await api.put(
         "/users/me",
-        { name, walletAddress, about, website, linkedin, twitter },
+        { name, about, website, linkedin, twitter },
         { headers: { "x-auth-token": token } },
       );
       await refreshUser();
@@ -44,6 +59,57 @@ const Profile: React.FC = () => {
       setStatus("Failed to update profile.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleWalletVerify = async () => {
+    setWalletStatus(null);
+    if (!publicKey) {
+      setWalletStatus({
+        tone: "error",
+        message: "Connect a wallet before verifying.",
+      });
+      return;
+    }
+    if (!signMessage) {
+      setWalletStatus({
+        tone: "error",
+        message: "Your wallet does not support message signing.",
+      });
+      return;
+    }
+
+    setVerifyingWallet(true);
+    try {
+      const walletAddress = publicKey.toBase58();
+      const challenge = await api.post(
+        "/users/me/wallet/challenge",
+        { walletAddress },
+        { headers: { "x-auth-token": token } },
+      );
+      const message = challenge.data?.message;
+      if (!message) {
+        throw new Error("Missing verification message.");
+      }
+      const encodedMessage = new TextEncoder().encode(message);
+      const signature = await signMessage(encodedMessage);
+      const signatureBase58 = bs58.encode(signature);
+
+      await api.post(
+        "/users/me/wallet/verify",
+        { walletAddress, signature: signatureBase58 },
+        { headers: { "x-auth-token": token } },
+      );
+      await refreshUser();
+      setWalletStatus({ tone: "success", message: "Wallet verified." });
+    } catch (err: any) {
+      console.error(err);
+      setWalletStatus({
+        tone: "error",
+        message: err.response?.data?.msg || "Failed to verify wallet.",
+      });
+    } finally {
+      setVerifyingWallet(false);
     }
   };
 
@@ -111,17 +177,6 @@ const Profile: React.FC = () => {
                   className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                 />
               </div>
-              <div>
-                <label className="text-sm font-medium text-slate-700">
-                  Wallet address
-                </label>
-                <input
-                  value={walletAddress}
-                  onChange={(e) => setWalletAddress(e.target.value)}
-                  className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                  placeholder="Solana wallet address"
-                />
-              </div>
               <button
                 type="button"
                 disabled={saving}
@@ -130,6 +185,58 @@ const Profile: React.FC = () => {
               >
                 {saving ? "Saving..." : "Save changes"}
               </button>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Wallet & rewards
+              </h2>
+              <p className="text-xs text-slate-500">
+                Verify your wallet to enable rewards and NFT minting.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <WalletMultiButton className="!rounded-full !bg-emerald-600 !px-5 !py-2 !text-sm !font-semibold !text-white hover:!bg-emerald-700" />
+                {connected && (
+                  <span className="text-xs text-slate-600">
+                    Connected: {formattedConnectedAddress}
+                  </span>
+                )}
+              </div>
+              {user?.walletAddress && (
+                <div className="text-xs text-slate-500">
+                  Saved wallet: {user.walletAddress}
+                </div>
+              )}
+              {isWalletVerified && user?.walletVerifiedAt && (
+                <div className="text-xs text-emerald-700">
+                  Verified on {new Date(user.walletVerifiedAt).toLocaleString()}
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={
+                  verifyingWallet || !connected || isConnectedAndVerified
+                }
+                onClick={handleWalletVerify}
+                className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-emerald-200 hover:text-emerald-700 transition disabled:opacity-70"
+              >
+                {isConnectedAndVerified
+                  ? "Wallet verified"
+                  : verifyingWallet
+                    ? "Verifying..."
+                    : "Verify wallet"}
+              </button>
+              {walletStatus && (
+                <p
+                  className={`text-xs ${walletStatus.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}
+                >
+                  {walletStatus.message}
+                </p>
+              )}
             </div>
           </div>
 

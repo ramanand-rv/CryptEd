@@ -14,6 +14,7 @@ interface User {
   website?: string;
   linkedin?: string;
   twitter?: string;
+  walletVerifiedAt?: string;
 }
 
 interface AuthContextType {

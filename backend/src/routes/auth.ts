@@ -37,6 +37,7 @@ router.post("/register/educator", async (req: Request, res: Response) => {
         twitter: user.twitter,
         role: user.role,
         walletAddress: user.walletAddress,
+        walletVerifiedAt: user.walletVerifiedAt,
       },
     });
   } catch (err: any) {
@@ -70,6 +71,7 @@ router.post("/login/educator", async (req: Request, res: Response) => {
         twitter: user.twitter,
         role: user.role,
         walletAddress: user.walletAddress,
+        walletVerifiedAt: user.walletVerifiedAt,
       },
     });
   } catch (err: any) {
@@ -105,6 +107,7 @@ router.post("/login/wallet", async (req: Request, res: Response) => {
         linkedin: user.linkedin,
         twitter: user.twitter,
         role: user.role,
+        walletVerifiedAt: user.walletVerifiedAt,
       },
     });
   } catch (err: any) {

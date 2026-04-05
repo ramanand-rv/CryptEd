@@ -9,6 +9,19 @@ interface QuizQuestion {
   correct: number;
 }
 
+interface QuizPayload {
+  id?: string;
+  title: string;
+  description: string;
+  tags: string[];
+  questions: QuizQuestion[];
+}
+
+const createId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
 const GenerateQuiz: React.FC = () => {
   const { id } = useParams();
   const { token } = useAuth();
@@ -22,6 +35,7 @@ const GenerateQuiz: React.FC = () => {
   const returnTo = queryParams.get("returnTo") || `/courses/${id}/contents`;
   const lessonId = queryParams.get("lessonId") || "";
 
+  const [targetLessonId, setTargetLessonId] = useState(lessonId);
   const [loading, setLoading] = useState(true);
   const [topic, setTopic] = useState(queryParams.get("topic") || "");
   const [description, setDescription] = useState(
@@ -30,6 +44,7 @@ const GenerateQuiz: React.FC = () => {
   const [tags, setTags] = useState("");
   const [numQuestions, setNumQuestions] = useState(5);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [quizId, setQuizId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +68,40 @@ const GenerateQuiz: React.FC = () => {
       fetchCourse();
     }
   }, [id, token]);
+
+  useEffect(() => {
+    setTargetLessonId(lessonId);
+  }, [lessonId]);
+
+  useEffect(() => {
+    if (!id) return;
+    if (typeof window === "undefined") return;
+    const mode = queryParams.get("mode");
+    if (mode !== "edit") return;
+    const raw = window.localStorage.getItem(`edit-quiz:${id}`);
+    if (!raw) return;
+
+    try {
+      const payload = JSON.parse(raw) as { lessonId: string; quiz: QuizPayload };
+      if (payload.lessonId) {
+        setTargetLessonId(payload.lessonId);
+      }
+      if (payload.quiz) {
+        setTopic(payload.quiz.title || "");
+        setDescription(payload.quiz.description || "");
+        setTags((payload.quiz.tags || []).join(", "));
+        setQuestions(Array.isArray(payload.quiz.questions) ? payload.quiz.questions : []);
+        setQuizId(payload.quiz.id || null);
+        if (payload.quiz.questions?.length) {
+          setNumQuestions(payload.quiz.questions.length);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load quiz for editing", err);
+    } finally {
+      window.localStorage.removeItem(`edit-quiz:${id}`);
+    }
+  }, [id, queryParams]);
 
   const tagList = useMemo(
     () =>
@@ -137,7 +186,7 @@ const GenerateQuiz: React.FC = () => {
 
   const handleSaveQuiz = () => {
     if (!id) return;
-    if (!lessonId) {
+    if (!targetLessonId) {
       setError("Select a lesson to attach this quiz.");
       return;
     }
@@ -153,15 +202,18 @@ const GenerateQuiz: React.FC = () => {
     setSaving(true);
     setError(null);
 
+    const nextQuizId = quizId?.trim() ? quizId : createId();
     const payload = {
-      lessonId,
+      lessonId: targetLessonId,
       quiz: {
+        id: nextQuizId,
         title: topic.trim(),
         description: description.trim(),
         tags: tagList,
         questions,
       },
     };
+    setQuizId(nextQuizId);
 
     try {
       window.localStorage.setItem(

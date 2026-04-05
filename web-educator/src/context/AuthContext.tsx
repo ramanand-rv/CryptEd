@@ -10,6 +10,11 @@ interface User {
   name: string;
   role: string;
   walletAddress?: string;
+  about?: string;
+  website?: string;
+  linkedin?: string;
+  twitter?: string;
+  walletVerifiedAt?: string;
 }
 
 interface AuthContextType {

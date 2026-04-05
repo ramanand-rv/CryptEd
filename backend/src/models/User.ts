@@ -6,6 +6,14 @@ export interface IUser extends Document {
   password?: string;
   role: "educator" | "learner";
   name?: string;
+  about?: string;
+  website?: string;
+  linkedin?: string;
+  twitter?: string;
+  walletVerifiedAt?: Date;
+  walletNonce?: string;
+  walletNonceCreatedAt?: Date;
+  walletVerificationMessage?: string;
   purchasedCourses?: mongoose.Types.ObjectId[];
   completedCourses: Array<{
     courseId: mongoose.Types.ObjectId;
@@ -20,6 +28,14 @@ const UserSchema: Schema = new Schema({
   password: { type: String },
   role: { type: String, enum: ["educator", "learner"], required: true },
   name: String,
+  about: { type: String, default: "" },
+  website: { type: String, default: "" },
+  linkedin: { type: String, default: "" },
+  twitter: { type: String, default: "" },
+  walletVerifiedAt: { type: Date },
+  walletNonce: { type: String },
+  walletNonceCreatedAt: { type: Date },
+  walletVerificationMessage: { type: String },
   purchasedCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }],
   completedCourses: [{ courseId: Schema.Types.ObjectId, completedAt: Date }],
   ownedNFTs: [String],

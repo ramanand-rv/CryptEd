@@ -31,8 +31,13 @@ router.post("/register/educator", async (req: Request, res: Response) => {
         id: user._id,
         email: user.email,
         name: user.name,
+        about: user.about,
+        website: user.website,
+        linkedin: user.linkedin,
+        twitter: user.twitter,
         role: user.role,
         walletAddress: user.walletAddress,
+        walletVerifiedAt: user.walletVerifiedAt,
       },
     });
   } catch (err: any) {
@@ -60,8 +65,13 @@ router.post("/login/educator", async (req: Request, res: Response) => {
         id: user._id,
         email: user.email,
         name: user.name,
+        about: user.about,
+        website: user.website,
+        linkedin: user.linkedin,
+        twitter: user.twitter,
         role: user.role,
         walletAddress: user.walletAddress,
+        walletVerifiedAt: user.walletVerifiedAt,
       },
     });
   } catch (err: any) {
@@ -92,7 +102,12 @@ router.post("/login/wallet", async (req: Request, res: Response) => {
         id: user._id,
         walletAddress: user.walletAddress,
         name: user.name,
+        about: user.about,
+        website: user.website,
+        linkedin: user.linkedin,
+        twitter: user.twitter,
         role: user.role,
+        walletVerifiedAt: user.walletVerifiedAt,
       },
     });
   } catch (err: any) {

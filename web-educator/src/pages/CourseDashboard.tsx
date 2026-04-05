@@ -146,6 +146,12 @@ const CourseDashboard: React.FC = () => {
           </div>
           <div className="flex items-center gap-3">
             <Link
+              to={`/courses/${id}/settings`}
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300 transition"
+            >
+              Course settings
+            </Link>
+            <Link
               to={`/courses/${id}/contents`}
               className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:border-slate-300 transition"
             >

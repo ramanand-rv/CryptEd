@@ -12,46 +12,19 @@ import {
 import {
   SortableContext,
   arrayMove,
-  useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import Editor from "../components/Editor";
+import LessonBasics from "./course-contents/LessonBasics";
+import LessonRow from "./course-contents/LessonRow";
+import ContentLessonEditor from "./course-contents/ContentLessonEditor";
+import type {
+  Lesson,
+  PendingQuiz,
+  QuizPayload,
+  StoredState,
+} from "./course-contents/types";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
-
-interface QuizQuestion {
-  question: string;
-  options: string[];
-  correct: number;
-}
-
-interface QuizPayload {
-  title: string;
-  description: string;
-  tags: string[];
-  questions: QuizQuestion[];
-}
-
-interface PendingQuiz {
-  lessonId: string;
-  quiz: QuizPayload;
-}
-
-interface Lesson {
-  id: string;
-  title: string;
-  description: string;
-  content: JSONContent;
-}
-
-interface StoredState {
-  lessons: Lesson[];
-  collapsedLessonIds: string[];
-  sidebarWidth: number;
-  sidebarCollapsed: boolean;
-  selectedLessonId?: string | null;
-}
 
 const DEFAULT_CONTENT: JSONContent = {
   type: "doc",
@@ -69,6 +42,7 @@ const createId = () =>
 
 const storageKey = (courseId: string) => `course-contents:${courseId}`;
 const pendingQuizKey = (courseId: string) => `pending-quiz:${courseId}`;
+const editingQuizKey = (courseId: string) => `edit-quiz:${courseId}`;
 
 const loadStoredState = (courseId: string): StoredState | null => {
   if (typeof window === "undefined") return null;
@@ -87,206 +61,28 @@ const saveStoredState = (courseId: string, state: StoredState) => {
   window.localStorage.setItem(storageKey(courseId), JSON.stringify(state));
 };
 
-const appendQuizBlock = (content: JSONContent, quiz: QuizPayload): JSONContent => {
+const upsertQuizBlock = (content: JSONContent, quiz: QuizPayload): JSONContent => {
   const existingBlocks = Array.isArray(content.content) ? content.content : [];
+  const quizId = quiz.id?.trim() ? quiz.id : createId();
+  let replaced = false;
+
+  const nextBlocks = existingBlocks.map((block: any) => {
+    if (block?.type === "quiz" && block?.attrs?.id === quizId) {
+      replaced = true;
+      return { ...block, attrs: { ...quiz, id: quizId } };
+    }
+    return block;
+  });
+
+  if (!replaced) {
+    nextBlocks.push({ type: "quiz", attrs: { ...quiz, id: quizId } });
+  }
+
   return {
     ...content,
-    content: [...existingBlocks, { type: "quiz", attrs: quiz }],
+    content: nextBlocks,
   };
 };
-
-interface LessonRowProps {
-  lesson: Lesson;
-  isSelected: boolean;
-  isCollapsed: boolean;
-  isSidebarCollapsed: boolean;
-  onSelect: () => void;
-  onToggleCollapse: () => void;
-  onStartRename: () => void;
-  editingTitle: string;
-  isEditing: boolean;
-  onCommitRename: () => void;
-  onChangeTitle: (value: string) => void;
-}
-
-const LessonRow: React.FC<LessonRowProps> = ({
-  lesson,
-  isSelected,
-  isCollapsed,
-  isSidebarCollapsed,
-  onSelect,
-  onToggleCollapse,
-  onStartRename,
-  editingTitle,
-  isEditing,
-  onCommitRename,
-  onChangeTitle,
-}) => {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    setActivatorNodeRef,
-    transform,
-    transition,
-    isDragging,
-    isOver,
-  } = useSortable({ id: lesson.id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  } as React.CSSProperties;
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`relative rounded-2xl border border-transparent px-3 py-2 transition group ${
-        isSelected
-          ? "bg-slate-100 border-slate-200"
-          : "hover:bg-slate-50"
-      } ${isDragging ? "opacity-50" : "opacity-100"}`}
-      {...(isSidebarCollapsed ? attributes : {})}
-      {...(isSidebarCollapsed ? listeners : {})}
-      onClick={() => {
-        if (isSidebarCollapsed) {
-          onToggleCollapse();
-        }
-        onSelect();
-      }}
-    >
-      {isOver && !isDragging && (
-        <div className="absolute -top-1 left-4 right-4 h-0.5 bg-emerald-400 rounded-full" />
-      )}
-
-      <div className="flex items-start gap-3">
-        {!isSidebarCollapsed && (
-          <button
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
-            onClick={(event) => event.stopPropagation()}
-            className="mt-1 rounded-lg px-2 py-1 text-slate-300 hover:text-slate-500 opacity-0 group-hover:opacity-100 transition"
-            aria-label="Drag lesson"
-          >
-            ⋮⋮
-          </button>
-        )}
-
-        <div className="flex-1 min-w-0">
-          {isEditing ? (
-            <input
-              value={editingTitle}
-              onChange={(event) => onChangeTitle(event.target.value)}
-              onBlur={onCommitRename}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  onCommitRename();
-                }
-              }}
-              autoFocus
-              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-medium text-slate-900 focus:border-emerald-400 focus:outline-none"
-            />
-          ) : isSidebarCollapsed ? (
-            <button
-              type="button"
-              onDoubleClick={(event) => {
-                event.stopPropagation();
-                onStartRename();
-              }}
-              className="h-9 w-9 rounded-xl bg-slate-100 text-slate-600 text-xs font-semibold flex items-center justify-center"
-              title={lesson.title || "Untitled lesson"}
-            >
-              {(lesson.title || "L").trim().charAt(0).toUpperCase()}
-            </button>
-          ) : (
-            <div>
-              <p
-                onDoubleClick={(event) => {
-                  event.stopPropagation();
-                  onStartRename();
-                }}
-                className="text-sm font-medium text-slate-900 truncate"
-              >
-                {lesson.title || "Untitled lesson"}
-              </p>
-              {!isCollapsed && lesson.description && (
-                <p className="text-xs text-slate-400 truncate">
-                  {lesson.description}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-interface LessonBasicsProps {
-  lesson: Lesson;
-  onUpdate: (updates: Partial<Lesson>) => void;
-}
-
-const LessonBasics: React.FC<LessonBasicsProps> = ({ lesson, onUpdate }) => (
-  <div className="space-y-4">
-    <input
-      value={lesson.title}
-      onChange={(event) => onUpdate({ title: event.target.value })}
-      className="w-full text-3xl md:text-4xl font-semibold text-slate-900 bg-transparent focus:outline-none"
-      placeholder="Lesson title"
-    />
-    <textarea
-      value={lesson.description}
-      onChange={(event) => onUpdate({ description: event.target.value })}
-      className="w-full resize-none rounded-2xl border border-slate-200 bg-white/70 px-4 py-3 text-sm text-slate-600 focus:border-emerald-400 focus:outline-none"
-      rows={3}
-      placeholder="Lesson description"
-    />
-  </div>
-);
-
-interface ContentLessonEditorProps {
-  lesson: Lesson;
-  onDelete: () => void;
-  onChangeContent: (content: JSONContent) => void;
-  onAddQuiz: () => void;
-}
-
-const ContentLessonEditor: React.FC<ContentLessonEditorProps> = ({
-  lesson,
-  onDelete,
-  onChangeContent,
-  onAddQuiz,
-}) => (
-  <div className="space-y-3">
-    <div className="flex items-center justify-between">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-          Lesson Editor
-        </p>
-        <p className="text-sm text-slate-500">
-          Type / to insert blocks, images, or lists.
-        </p>
-      </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        className="text-xs uppercase font-semibold text-rose-500"
-      >
-        Delete lesson
-      </button>
-    </div>
-    <Editor
-      key={lesson.id}
-      content={lesson.content}
-      onChange={onChangeContent}
-      onAddQuiz={onAddQuiz}
-    />
-  </div>
-);
 
 const CourseContents: React.FC = () => {
   const { id } = useParams();
@@ -297,6 +93,9 @@ const CourseContents: React.FC = () => {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [loadStatus, setLoadStatus] = useState<
+    "loading" | "server" | "local" | "error"
+  >("loading");
   const [courseTitle, setCourseTitle] = useState("");
   const [courseStatus, setCourseStatus] = useState<"draft" | "published">(
     "draft",
@@ -321,6 +120,7 @@ const CourseContents: React.FC = () => {
   const [hydrated, setHydrated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const canSync = loadStatus === "server";
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -329,6 +129,7 @@ const CourseContents: React.FC = () => {
   useEffect(() => {
     const fetchCourse = async () => {
       if (!id) return;
+      setLoadStatus("loading");
       try {
         const res = await api.get(`/courses/${id}`, {
           headers: token ? { "x-auth-token": token } : undefined,
@@ -400,12 +201,40 @@ const CourseContents: React.FC = () => {
 
         setLegacyBlocks(extras);
         setHasLegacy(legacyDetected);
+        setError(null);
+        setLoadStatus("server");
+        setHydrated(true);
       } catch (err) {
         console.error(err);
-        setError("Unable to load course contents.");
+        const stored = loadStoredState(id);
+        if (stored?.lessons?.length) {
+          const normalizedLessons = stored.lessons.map((lesson) => ({
+            ...lesson,
+            description: lesson.description || "",
+            content: lesson.content || DEFAULT_CONTENT,
+          }));
+          setLessons(normalizedLessons);
+          setCollapsedLessonIds(new Set(stored.collapsedLessonIds || []));
+          const storedWidth = stored.sidebarWidth || 320;
+          const clampedWidth = Math.min(
+            Math.max(storedWidth, SIDEBAR_MIN),
+            SIDEBAR_MAX,
+          );
+          setSidebarWidth(clampedWidth);
+          setSidebarCollapsed(Boolean(stored.sidebarCollapsed));
+          setSelectedLessonId(
+            stored.selectedLessonId || normalizedLessons[0]?.id || null,
+          );
+          setLoadStatus("local");
+          setHydrated(true);
+          setError("Offline: loaded your local draft. Sync is disabled.");
+        } else {
+          setLoadStatus("error");
+          setHydrated(false);
+          setError("Unable to load course contents. Please check your connection.");
+        }
       } finally {
         setLoading(false);
-        setHydrated(true);
       }
     };
 
@@ -491,7 +320,7 @@ const CourseContents: React.FC = () => {
       if (!targetLesson) return;
 
       updateLesson(targetLesson.id, {
-        content: appendQuizBlock(targetLesson.content, pending.quiz),
+        content: upsertQuizBlock(targetLesson.content, pending.quiz),
       });
       window.localStorage.removeItem(pendingQuizKey(id));
     } catch (err) {
@@ -527,14 +356,27 @@ const CourseContents: React.FC = () => {
     setEditingTitle(newLesson.title);
   };
 
-  const openQuizBuilder = (lesson: Lesson) => {
+  const openQuizBuilder = (lesson: Lesson, quiz?: QuizPayload) => {
     if (!id) return;
+    if (typeof window !== "undefined") {
+      if (quiz) {
+        window.localStorage.setItem(
+          editingQuizKey(id),
+          JSON.stringify({ lessonId: lesson.id, quiz }),
+        );
+      } else {
+        window.localStorage.removeItem(editingQuizKey(id));
+      }
+    }
     const params = new URLSearchParams({
       lessonId: lesson.id,
       returnTo: `${location.pathname}${location.search}`,
       topic: lesson.title || "",
       description: lesson.description || "",
     });
+    if (quiz) {
+      params.set("mode", "edit");
+    }
     navigate(`/courses/${id}/quiz?${params.toString()}`);
   };
 
@@ -596,6 +438,10 @@ const CourseContents: React.FC = () => {
 
   const handleSyncToCourse = async () => {
     if (!id) return;
+    if (!canSync) {
+      setError("Offline: reconnect and refresh before syncing to the server.");
+      return;
+    }
     setIsSyncing(true);
     setError(null);
 
@@ -631,6 +477,10 @@ const CourseContents: React.FC = () => {
 
   const handlePublishCourse = async () => {
     if (!id || courseStatus === "published") return;
+    if (!canSync) {
+      setError("Offline: reconnect and refresh before publishing.");
+      return;
+    }
     setIsSyncing(true);
     setError(null);
 
@@ -706,7 +556,12 @@ const CourseContents: React.FC = () => {
             <button
               type="button"
               onClick={handleSyncToCourse}
-              disabled={isSyncing}
+              disabled={isSyncing || !canSync}
+              title={
+                canSync
+                  ? undefined
+                  : "Offline: reconnect and refresh before syncing"
+              }
               className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-60"
             >
               {isSyncing
@@ -719,7 +574,12 @@ const CourseContents: React.FC = () => {
               <button
                 type="button"
                 onClick={handlePublishCourse}
-                disabled={isSyncing}
+                disabled={isSyncing || !canSync}
+                title={
+                  canSync
+                    ? undefined
+                    : "Offline: reconnect and refresh before publishing"
+                }
                 className="rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
               >
                 Publish course
@@ -753,7 +613,7 @@ const CourseContents: React.FC = () => {
           )}
 
           <aside
-            className={`absolute inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white/95 transition-transform duration-300 md:static md:translate-x-0 ${
+            className={`absolute inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white/95 transition-[width,transform] duration-300 ease-in-out md:static md:translate-x-0 ${
               isSidebarOpen ? "translate-x-0" : "-translate-x-full"
             }`}
             style={{
@@ -890,6 +750,7 @@ const CourseContents: React.FC = () => {
                       updateLesson(activeLesson.id, { content: next })
                     }
                     onAddQuiz={() => openQuizBuilder(activeLesson)}
+                    onEditQuiz={(quiz) => openQuizBuilder(activeLesson, quiz)}
                   />
               </>
             ) : (

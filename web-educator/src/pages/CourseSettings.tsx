@@ -15,7 +15,7 @@ interface CourseSettingsSnapshot {
 
 const CourseSettings: React.FC = () => {
   const { id } = useParams();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -182,9 +182,16 @@ const CourseSettings: React.FC = () => {
             >
               Back to course dashboard
             </Link>
-            <h1 className="text-3xl md:text-4xl font-semibold text-slate-900 mt-2">
-              Course settings
-            </h1>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <h1 className="text-3xl md:text-4xl font-semibold text-slate-900">
+                Course settings
+              </h1>
+              {user?.walletVerifiedAt && (
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  Verified
+                </span>
+              )}
+            </div>
             <p className="text-sm text-slate-600 mt-2 max-w-2xl">
               Update the course title and description shown to learners.
             </p>

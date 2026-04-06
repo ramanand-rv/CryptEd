@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
 const CreateCourse: React.FC = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
 
   const [title, setTitle] = useState("");
@@ -16,6 +16,7 @@ const CreateCourse: React.FC = () => {
   const [submitting, setSubmitting] = useState<"draft" | "published" | null>(
     null,
   );
+  const rewardsLocked = !user?.walletVerifiedAt;
 
   const handleCreate = async (status: "draft" | "published") => {
     setSubmitting(status);
@@ -26,9 +27,9 @@ const CreateCourse: React.FC = () => {
       price: price * 1e9,
       content: [],
       status,
-      nftMetadataUri: nftMetadataUri || undefined,
+      nftMetadataUri: rewardsLocked ? undefined : nftMetadataUri || undefined,
       rewardPool:
-        rewardPoolAmount > 0
+        !rewardsLocked && rewardPoolAmount > 0
           ? {
               totalAmount: rewardPoolAmount * 1e9,
               winnersCount: Math.max(1, rewardWinners || 1),
@@ -177,6 +178,12 @@ const CreateCourse: React.FC = () => {
               <p className="text-xs text-slate-500 mt-1">
                 Optional, but delightful. Reward learners for completion.
               </p>
+              {rewardsLocked && (
+                <p className="mt-3 text-xs text-amber-600">
+                  Verify your wallet in Profile settings to enable rewards and
+                  NFT minting.
+                </p>
+              )}
               <div className="mt-5 space-y-4">
                 <div>
                   <label
@@ -192,6 +199,7 @@ const CreateCourse: React.FC = () => {
                     onChange={(e) => setNftMetadataUri(e.target.value)}
                     className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                     placeholder="ipfs://..."
+                    disabled={rewardsLocked}
                   />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -211,6 +219,7 @@ const CreateCourse: React.FC = () => {
                         setRewardPoolAmount(parseFloat(e.target.value))
                       }
                       className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      disabled={rewardsLocked}
                     />
                   </div>
                   <div>
@@ -229,6 +238,7 @@ const CreateCourse: React.FC = () => {
                       }
                       className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                       min="1"
+                      disabled={rewardsLocked}
                     />
                   </div>
                 </div>

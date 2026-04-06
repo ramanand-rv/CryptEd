@@ -28,6 +28,9 @@ export async function distributeReward(courseId: string, userId: string) {
   const course = await Course.findById(courseId);
   if (!course || !course.rewardPool) return;
 
+  const educator = await User.findById(course.educatorId);
+  if (!educator?.walletVerifiedAt) return;
+
   const { totalAmount, remaining, winnersCount, winners } = course.rewardPool;
   if (remaining <= 0) return;
 

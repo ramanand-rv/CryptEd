@@ -29,6 +29,17 @@ router.post("/", auth, async (req: AuthRequest, res: Response) => {
       status,
     } = req.body;
 
+    const requiresVerifiedWallet =
+      Boolean(nftMetadataUri) || Boolean(rewardPool);
+    if (requiresVerifiedWallet) {
+      const educator = await User.findById(req.user.userId);
+      if (!educator?.walletVerifiedAt) {
+        return res.status(400).json({
+          msg: "Verify your wallet before enabling NFT rewards.",
+        });
+      }
+    }
+
     const course = new Course({
       title,
       description,
@@ -260,6 +271,17 @@ router.put("/:id", auth, async (req: AuthRequest, res: Response) => {
       rewardPool,
       status,
     } = req.body;
+
+    const requiresVerifiedWallet =
+      Boolean(nftMetadataUri) || Boolean(rewardPool);
+    if (requiresVerifiedWallet) {
+      const educator = await User.findById(req.user.userId);
+      if (!educator?.walletVerifiedAt) {
+        return res.status(400).json({
+          msg: "Verify your wallet before enabling NFT rewards.",
+        });
+      }
+    }
 
     course.title = title || course.title;
     course.description = description || course.description;

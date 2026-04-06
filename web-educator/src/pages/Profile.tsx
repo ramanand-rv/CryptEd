@@ -34,14 +34,62 @@ const Profile: React.FC = () => {
   }, [user]);
 
   const connectedAddress = publicKey?.toBase58() || "";
+  const savedWallet = user?.walletAddress || "";
+  const hasSavedWallet = Boolean(savedWallet);
   const formattedConnectedAddress = useMemo(() => {
     if (!connectedAddress) return "";
     return `${connectedAddress.slice(0, 4)}...${connectedAddress.slice(-4)}`;
   }, [connectedAddress]);
+  const formattedSavedAddress = useMemo(() => {
+    if (!savedWallet) return "";
+    return `${savedWallet.slice(0, 4)}...${savedWallet.slice(-4)}`;
+  }, [savedWallet]);
 
   const isWalletVerified = Boolean(user?.walletVerifiedAt);
   const isConnectedAndVerified =
     isWalletVerified && connectedAddress === user?.walletAddress;
+  const walletState = useMemo(() => {
+    if (!connected) {
+      if (hasSavedWallet && isWalletVerified) {
+        return {
+          tone: "success" as const,
+          message: "Saved wallet verified. Connect to manage or switch.",
+        };
+      }
+      if (hasSavedWallet && !isWalletVerified) {
+        return {
+          tone: "warning" as const,
+          message: "Saved wallet not verified yet. Connect to verify.",
+        };
+      }
+      return {
+        tone: "warning" as const,
+        message: "No wallet connected. Connect to verify for rewards.",
+      };
+    }
+    if (hasSavedWallet && connectedAddress !== savedWallet) {
+      return {
+        tone: "warning" as const,
+        message: "Connected wallet doesn’t match saved wallet.",
+      };
+    }
+    if (!hasSavedWallet) {
+      return {
+        tone: "warning" as const,
+        message: "Connected wallet not saved yet. Click verify to link it.",
+      };
+    }
+    if (!isWalletVerified) {
+      return {
+        tone: "warning" as const,
+        message: "Saved wallet needs verification. Click verify to continue.",
+      };
+    }
+    return {
+      tone: "success" as const,
+      message: "Wallet verified and ready for rewards.",
+    };
+  }, [connected, hasSavedWallet, isWalletVerified, connectedAddress, savedWallet]);
 
   const handleProfileSave = async () => {
     setStatus("");
@@ -141,9 +189,16 @@ const Profile: React.FC = () => {
             <Link to="/dashboard" className="text-xs uppercase text-emerald-600">
               Back to dashboard
             </Link>
-            <h1 className="text-3xl font-semibold text-slate-900 mt-2">
-              Profile settings
-            </h1>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <h1 className="text-3xl font-semibold text-slate-900">
+                Profile settings
+              </h1>
+              {isWalletVerified && (
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  Verified
+                </span>
+              )}
+            </div>
             <p className="text-sm text-slate-600 mt-2">
               Update your account info, wallet, and password anytime.
             </p>
@@ -206,9 +261,9 @@ const Profile: React.FC = () => {
                   </span>
                 )}
               </div>
-              {user?.walletAddress && (
+              {hasSavedWallet && (
                 <div className="text-xs text-slate-500">
-                  Saved wallet: {user.walletAddress}
+                  Saved wallet: {formattedSavedAddress}
                 </div>
               )}
               {isWalletVerified && user?.walletVerifiedAt && (
@@ -230,6 +285,19 @@ const Profile: React.FC = () => {
                     ? "Verifying..."
                     : "Verify wallet"}
               </button>
+              {walletState && (
+                <p
+                  className={`text-xs ${
+                    walletState.tone === "success"
+                      ? "text-emerald-700"
+                      : walletState.tone === "warning"
+                        ? "text-amber-600"
+                        : "text-rose-600"
+                  }`}
+                >
+                  {walletState.message}
+                </p>
+              )}
               {walletStatus && (
                 <p
                   className={`text-xs ${walletStatus.tone === "success" ? "text-emerald-700" : "text-rose-600"}`}

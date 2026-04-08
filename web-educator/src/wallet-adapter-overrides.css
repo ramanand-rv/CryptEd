@@ -1,0 +1,149 @@
+.wallet-adapter-button {
+  font-family: "Instrument Sans", "Space Grotesk", system-ui, sans-serif;
+  border-radius: 999px !important;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.wallet-adapter-button:not(.wallet-adapter-button-trigger) {
+  background: var(--accent) !important;
+  color: #ffffff !important;
+}
+
+.wallet-adapter-button-trigger {
+  background: var(--accent) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(15, 118, 110, 0.35);
+  box-shadow: 0 12px 30px -22px rgba(15, 23, 42, 0.45);
+}
+
+.wallet-adapter-button:not(.wallet-adapter-button-trigger):hover {
+  background: #0e6962 !important;
+}
+
+.wallet-adapter-button-trigger:not([disabled]):hover {
+  background: #0e6962 !important;
+}
+
+.wallet-adapter-modal-overlay {
+  background: rgba(15, 23, 42, 0.35) !important;
+  backdrop-filter: blur(4px);
+}
+
+.wallet-adapter-modal-container {
+  font-family: "Instrument Sans", "Space Grotesk", system-ui, sans-serif;
+  color: var(--ink) !important;
+}
+
+.wallet-adapter-modal-wrapper {
+  background: var(--card) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--border);
+  border-radius: 24px !important;
+  box-shadow: 0 24px 60px -40px rgba(15, 23, 42, 0.65);
+}
+
+.wallet-adapter-modal-title {
+  font-family: "Space Grotesk", "Instrument Sans", system-ui, sans-serif;
+  color: var(--ink) !important;
+  letter-spacing: 0.01em;
+}
+
+.wallet-adapter-modal-list {
+  margin: 0 !important;
+}
+
+.wallet-adapter-modal-list-item {
+  background: #ffffff !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 16px !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.wallet-adapter-modal-list-item:not(:first-child) {
+  margin-top: 10px !important;
+}
+
+.wallet-adapter-modal-list-item:hover {
+  background: var(--accent-soft) !important;
+  border-color: rgba(15, 118, 110, 0.35) !important;
+  box-shadow: 0 10px 30px -24px rgba(15, 23, 42, 0.4);
+}
+
+.wallet-adapter-modal-list-item-name,
+.wallet-adapter-modal-list-item-name span {
+  color: var(--ink) !important;
+  font-weight: 600;
+}
+
+.wallet-adapter-modal-list-item-description {
+  color: var(--muted) !important;
+}
+
+.wallet-adapter-modal-button-close {
+  background: var(--bg-strong) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--ink) !important;
+  border-radius: 999px !important;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.wallet-adapter-modal-button-close:hover {
+  background: #e6e0d6 !important;
+  border-color: rgba(15, 118, 110, 0.3) !important;
+}
+
+.wallet-adapter-modal-list-more {
+  color: var(--ink) !important;
+}
+
+.wallet-adapter-modal-list-more svg {
+  fill: var(--ink) !important;
+}
+
+.wallet-adapter-modal-middle-button {
+  border-radius: 999px !important;
+  background: var(--accent) !important;
+  font-family: "Instrument Sans", "Space Grotesk", system-ui, sans-serif;
+  font-weight: 600;
+}
+
+.wallet-adapter-modal-middle-button:hover {
+  background: #0e6962 !important;
+}
+
+.wallet-adapter-dropdown {
+  font-family: "Instrument Sans", "Space Grotesk", system-ui, sans-serif;
+}
+
+.wallet-adapter-dropdown-list {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 18px 40px -28px rgba(15, 23, 42, 0.45);
+  padding: 10px !important;
+}
+
+.wallet-adapter-dropdown-list-active {
+  transform: translateY(8px) !important;
+}
+
+.wallet-adapter-dropdown-list-item {
+  background: #ffffff !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  color: var(--ink) !important;
+  font-weight: 600;
+}
+
+.wallet-adapter-dropdown-list-item:not([disabled]):hover {
+  background: var(--accent-soft) !important;
+  border-color: rgba(15, 118, 110, 0.35) !important;
+}
+
+.wallet-adapter-modal-list-item-icon {
+  border-radius: 12px;
+  background: var(--bg-strong);
+  padding: 6px;
+}

@@ -220,6 +220,7 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
         id: course._id,
         title: course.title,
         description: course.description,
+        price: course.price,
         status: course.status,
       },
       metrics: {

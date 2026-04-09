@@ -10,6 +10,7 @@ import { api } from "../lib/api";
 interface CourseSettingsSnapshot {
   title: string;
   description: string;
+  price: number;
   status: "draft" | "published";
 }
 
@@ -29,11 +30,13 @@ const CourseSettings: React.FC = () => {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [price, setPrice] = useState<number>(0);
   const [status, setStatus] = useState<"draft" | "published">("draft");
   const [initialSnapshot, setInitialSnapshot] = useState<CourseSettingsSnapshot>(
     {
       title: "",
       description: "",
+      price: 0,
       status: "draft",
     },
   );
@@ -53,15 +56,20 @@ const CourseSettings: React.FC = () => {
         const course = res.data?.course;
         const nextTitle = course?.title || "";
         const nextDescription = course?.description || "";
+        const nextPrice = Number.isFinite(course?.price)
+          ? course.price / 1e9
+          : 0;
         const nextStatus =
           course?.status === "published" ? "published" : "draft";
 
         setTitle(nextTitle);
         setDescription(nextDescription);
+        setPrice(nextPrice);
         setStatus(nextStatus);
         setInitialSnapshot({
           title: nextTitle.trim(),
           description: nextDescription.trim(),
+          price: nextPrice,
           status: nextStatus,
         });
       } catch (err) {
@@ -79,9 +87,10 @@ const CourseSettings: React.FC = () => {
     return (
       title.trim() !== initialSnapshot.title ||
       description.trim() !== initialSnapshot.description ||
+      price !== initialSnapshot.price ||
       status !== initialSnapshot.status
     );
-  }, [title, description, status, initialSnapshot]);
+  }, [title, description, price, status, initialSnapshot]);
 
   const attemptNavigation = (path: string) => {
     if (hasUnsavedChanges) {
@@ -106,6 +115,7 @@ const CourseSettings: React.FC = () => {
 
     const normalizedTitle = title.trim();
     const normalizedDescription = description.trim();
+    const normalizedPrice = Number.isFinite(price) ? price : 0;
 
     try {
       await api.put(
@@ -113,15 +123,18 @@ const CourseSettings: React.FC = () => {
         {
           title: normalizedTitle,
           description: normalizedDescription,
+          price: Math.max(0, normalizedPrice) * 1e9,
           status,
         },
         { headers: { "x-auth-token": token } },
       );
       setTitle(normalizedTitle);
       setDescription(normalizedDescription);
+      setPrice(Math.max(0, normalizedPrice));
       setInitialSnapshot({
         title: normalizedTitle,
         description: normalizedDescription,
+        price: Math.max(0, normalizedPrice),
         status,
       });
       setSuccess("Course settings updated.");
@@ -292,6 +305,22 @@ const CourseSettings: React.FC = () => {
               className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
               rows={5}
               placeholder="Describe what learners will gain from this course."
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">
+              Course price (SOL)
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={Number.isFinite(price) ? price : 0}
+              onChange={(event) => {
+                const next = Number.parseFloat(event.target.value);
+                setPrice(Number.isFinite(next) ? next : 0);
+              }}
+              className="w-full mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
             />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">

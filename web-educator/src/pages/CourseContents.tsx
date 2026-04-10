@@ -1,6 +1,7 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { JSONContent } from "@tiptap/react";
+import { useWallet } from "@solana/wallet-adapter-react";
 import {
   DndContext,
   DragOverlay,
@@ -86,7 +87,8 @@ const upsertQuizBlock = (content: JSONContent, quiz: QuizPayload): JSONContent =
 
 const CourseContents: React.FC = () => {
   const { id } = useParams();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const { connected, publicKey } = useWallet();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -121,6 +123,13 @@ const CourseContents: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const canSync = loadStatus === "server";
+  const savedWalletAddress = user?.walletAddress || "";
+  const connectedWalletAddress = publicKey?.toBase58() || "";
+  const isWalletConnectedAndVerified =
+    Boolean(user?.walletVerifiedAt) &&
+    Boolean(savedWalletAddress) &&
+    connected &&
+    connectedWalletAddress === savedWalletAddress;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -481,6 +490,10 @@ const CourseContents: React.FC = () => {
       setError("Offline: reconnect and refresh before publishing.");
       return;
     }
+    if (!isWalletConnectedAndVerified) {
+      setError("Connect your verified wallet before publishing this draft.");
+      return;
+    }
     setIsSyncing(true);
     setError(null);
 
@@ -488,7 +501,12 @@ const CourseContents: React.FC = () => {
       await api.put(
         `/courses/${id}`,
         { status: "published" },
-        { headers: { "x-auth-token": token } },
+        {
+          headers: {
+            "x-auth-token": token,
+            "x-wallet-address": connectedWalletAddress,
+          },
+        },
       );
       setCourseStatus("published");
     } catch (err: any) {
@@ -574,11 +592,13 @@ const CourseContents: React.FC = () => {
               <button
                 type="button"
                 onClick={handlePublishCourse}
-                disabled={isSyncing || !canSync}
+                disabled={isSyncing || !canSync || !isWalletConnectedAndVerified}
                 title={
-                  canSync
-                    ? undefined
-                    : "Offline: reconnect and refresh before publishing"
+                  !canSync
+                    ? "Offline: reconnect and refresh before publishing"
+                    : !isWalletConnectedAndVerified
+                      ? "Connect your verified wallet before publishing"
+                      : undefined
                 }
                 className="rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 transition disabled:opacity-60"
               >

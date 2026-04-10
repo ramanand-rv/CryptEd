@@ -8,6 +8,7 @@ import { PhantomWalletAdapter, SolflareWalletAdapter } from "@solana/wallet-adap
 import { clusterApiUrl } from "@solana/web3.js";
 import "./index.css";
 import "@solana/wallet-adapter-react-ui/styles.css";
+import "./wallet-adapter-overrides.css";
 
 const WalletProviders: React.FC<{ children: React.ReactNode }> = ({
   children,

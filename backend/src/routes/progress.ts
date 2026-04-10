@@ -67,9 +67,14 @@ router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
 
     if (isCompleted) {
       progress.completedAt = new Date();
+      const educatorId = course.educatorId
+        ? String((course.educatorId as any)?._id ?? course.educatorId)
+        : undefined;
+      const educator = educatorId ? await User.findById(educatorId) : null;
+      const educatorWalletVerified = Boolean(educator?.walletVerifiedAt);
 
       // Mint NFT if metadata URI exists
-      if (course.nftMetadataUri) {
+      if (course.nftMetadataUri && educatorWalletVerified) {
         try {
           // Get learner's wallet address (assuming user has walletAddress field)
           const user = await User.findById(userId);
@@ -89,7 +94,7 @@ router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
           // Don't fail the whole request, just log error
         }
       }
-      if (userId) {
+      if (userId && educatorWalletVerified) {
         await distributeReward(courseId, userId);
       }
     }

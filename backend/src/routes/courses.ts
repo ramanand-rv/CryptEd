@@ -12,12 +12,50 @@ interface AuthRequest extends Request {
   user?: { userId: string; role: string };
 }
 
+const getConnectedWalletAddress = (req: AuthRequest) => {
+  const raw = req.header("x-wallet-address");
+  return typeof raw === "string" ? raw.trim() : "";
+};
+
+const ensureWalletConnectedAndVerified = async (
+  req: AuthRequest,
+  res: Response,
+) => {
+  const educator = await User.findById(req.user?.userId);
+  if (!educator?.walletAddress || !educator.walletVerifiedAt) {
+    res.status(400).json({
+      msg: "Verify your wallet before creating or publishing courses.",
+    });
+    return null;
+  }
+
+  const connectedWallet = getConnectedWalletAddress(req);
+  if (!connectedWallet) {
+    res.status(400).json({
+      msg: "Connect your verified wallet before creating or publishing courses.",
+    });
+    return null;
+  }
+
+  if (connectedWallet !== educator.walletAddress) {
+    res.status(400).json({
+      msg: "Connected wallet must match your verified wallet.",
+    });
+    return null;
+  }
+
+  return educator;
+};
+
 // Create a course (educator only)
 router.post("/", auth, async (req: AuthRequest, res: Response) => {
   try {
     if (req.user?.role !== "educator") {
       return res.status(403).json({ msg: "Only educators can create courses" });
     }
+
+    const walletReady = await ensureWalletConnectedAndVerified(req, res);
+    if (!walletReady) return;
 
     const {
       title,
@@ -209,6 +247,7 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
         id: course._id,
         title: course.title,
         description: course.description,
+        price: course.price,
         status: course.status,
       },
       metrics: {
@@ -260,6 +299,26 @@ router.put("/:id", auth, async (req: AuthRequest, res: Response) => {
       rewardPool,
       status,
     } = req.body;
+
+    const requestedStatus = status === "published" ? "published" : "draft";
+    const isPublishingDraft =
+      course.status !== "published" && requestedStatus === "published";
+    let educator: any = null;
+    if (isPublishingDraft) {
+      educator = await ensureWalletConnectedAndVerified(req, res);
+      if (!educator) return;
+    }
+
+    const requiresVerifiedWallet =
+      Boolean(nftMetadataUri) || Boolean(rewardPool);
+    if (requiresVerifiedWallet) {
+      educator = educator || (await User.findById(req.user?.userId));
+      if (!educator?.walletVerifiedAt) {
+        return res.status(400).json({
+          msg: "Verify your wallet before enabling NFT rewards.",
+        });
+      }
+    }
 
     course.title = title || course.title;
     course.description = description || course.description;

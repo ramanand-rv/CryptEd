@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
 const CreateCourse: React.FC = () => {
   const { token, user } = useAuth();
+  const { connected, publicKey } = useWallet();
   const navigate = useNavigate();
 
   const [title, setTitle] = useState("");
@@ -16,9 +18,25 @@ const CreateCourse: React.FC = () => {
   const [submitting, setSubmitting] = useState<"draft" | "published" | null>(
     null,
   );
-  const rewardsLocked = !user?.walletVerifiedAt;
+  const [error, setError] = useState<string | null>(null);
+  const savedWalletAddress = user?.walletAddress || "";
+  const connectedWalletAddress = publicKey?.toBase58() || "";
+  const isWalletConnectedAndVerified =
+    Boolean(user?.walletVerifiedAt) &&
+    Boolean(savedWalletAddress) &&
+    connected &&
+    connectedWalletAddress === savedWalletAddress;
+  const rewardsLocked = !isWalletConnectedAndVerified;
 
   const handleCreate = async (status: "draft" | "published") => {
+    setError(null);
+    if (!isWalletConnectedAndVerified) {
+      setError(
+        "Connect your verified wallet before creating or publishing courses.",
+      );
+      return;
+    }
+
     setSubmitting(status);
 
     const courseData = {
@@ -39,7 +57,10 @@ const CreateCourse: React.FC = () => {
 
     try {
       const res = await api.post("/courses", courseData, {
-        headers: { "x-auth-token": token },
+        headers: {
+          "x-auth-token": token,
+          "x-wallet-address": connectedWalletAddress,
+        },
       });
       const courseId = res.data?._id;
       if (courseId) {
@@ -47,9 +68,13 @@ const CreateCourse: React.FC = () => {
       } else {
         navigate("/dashboard");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to create course. Please check the console for details.");
+      setError(
+        err?.response?.data?.msg ||
+          err?.response?.data?.error ||
+          "Failed to create course. Please try again.",
+      );
     } finally {
       setSubmitting(null);
     }
@@ -79,7 +104,12 @@ const CreateCourse: React.FC = () => {
               type="submit"
               form="create-course"
               value="draft"
-              disabled={submitting !== null}
+              disabled={submitting !== null || !isWalletConnectedAndVerified}
+              title={
+                isWalletConnectedAndVerified
+                  ? undefined
+                  : "Connect your verified wallet to create a course"
+              }
               className="rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 transition disabled:opacity-70"
             >
               {submitting === "draft" ? "Saving..." : "Save draft"}
@@ -88,13 +118,29 @@ const CreateCourse: React.FC = () => {
               type="submit"
               form="create-course"
               value="published"
-              disabled={submitting !== null}
+              disabled={submitting !== null || !isWalletConnectedAndVerified}
+              title={
+                isWalletConnectedAndVerified
+                  ? undefined
+                  : "Connect your verified wallet to publish a course"
+              }
               className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-70"
             >
               {submitting === "published" ? "Publishing..." : "Publish course"}
             </button>
           </div>
         </div>
+        {!isWalletConnectedAndVerified && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            Connect your verified wallet in Profile before creating or
+            publishing courses.
+          </div>
+        )}
+        {error && (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {error}
+          </div>
+        )}
 
         <form
           id="create-course"
@@ -180,8 +226,8 @@ const CreateCourse: React.FC = () => {
               </p>
               {rewardsLocked && (
                 <p className="mt-3 text-xs text-amber-600">
-                  Verify your wallet in Profile settings to enable rewards and
-                  NFT minting.
+                  Connect your verified wallet in Profile settings to enable
+                  rewards and NFT minting.
                 </p>
               )}
               <div className="mt-5 space-y-4">

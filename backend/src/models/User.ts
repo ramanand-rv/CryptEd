@@ -1,5 +1,13 @@
 import mongoose, { Schema, Document } from "mongoose";
 
+export interface IUserOwnedNFT {
+  mintAddress: string;
+  courseId?: mongoose.Types.ObjectId;
+  courseTitle?: string;
+  metadataUri?: string;
+  mintedAt?: Date;
+}
+
 export interface IUser extends Document {
   email?: string;
   walletAddress?: string;
@@ -19,7 +27,7 @@ export interface IUser extends Document {
     courseId: mongoose.Types.ObjectId;
     completedAt: Date;
   }>;
-  ownedNFTs: string[];
+  ownedNFTs: Array<string | IUserOwnedNFT>;
 }
 
 const UserSchema: Schema = new Schema({
@@ -38,7 +46,7 @@ const UserSchema: Schema = new Schema({
   walletVerificationMessage: { type: String },
   purchasedCourses: [{ type: Schema.Types.ObjectId, ref: "Course" }],
   completedCourses: [{ courseId: Schema.Types.ObjectId, completedAt: Date }],
-  ownedNFTs: [String],
+  ownedNFTs: { type: [Schema.Types.Mixed], default: [] },
 });
 
 export default mongoose.model<IUser>("User", UserSchema);

@@ -2,8 +2,33 @@ import express, { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import User, { IUser } from "../models/User.js";
+import {
+  type CertificateResponse,
+  toCertificateResponse,
+} from "../services/certificates.js";
 
 const router = express.Router();
+
+const isCertificateResponse = (
+  value: CertificateResponse | null,
+): value is CertificateResponse => Boolean(value);
+
+const toAuthUser = (user: IUser) => ({
+  id: user._id,
+  email: user.email,
+  walletAddress: user.walletAddress,
+  name: user.name,
+  about: user.about,
+  website: user.website,
+  linkedin: user.linkedin,
+  twitter: user.twitter,
+  role: user.role,
+  walletVerifiedAt: user.walletVerifiedAt,
+  completedCourses: user.completedCourses || [],
+  ownedNFTs: ((user.ownedNFTs || []) as unknown[])
+    .map((entry) => toCertificateResponse(entry))
+    .filter(isCertificateResponse),
+});
 
 // Register educator
 router.post("/register/educator", async (req: Request, res: Response) => {
@@ -25,21 +50,7 @@ router.post("/register/educator", async (req: Request, res: Response) => {
       { userId: user._id, role: user.role },
       process.env.JWT_SECRET as string,
     );
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        about: user.about,
-        website: user.website,
-        linkedin: user.linkedin,
-        twitter: user.twitter,
-        role: user.role,
-        walletAddress: user.walletAddress,
-        walletVerifiedAt: user.walletVerifiedAt,
-      },
-    });
+    res.json({ token, user: toAuthUser(user) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -59,21 +70,7 @@ router.post("/login/educator", async (req: Request, res: Response) => {
       { userId: user._id, role: user.role },
       process.env.JWT_SECRET as string,
     );
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        about: user.about,
-        website: user.website,
-        linkedin: user.linkedin,
-        twitter: user.twitter,
-        role: user.role,
-        walletAddress: user.walletAddress,
-        walletVerifiedAt: user.walletVerifiedAt,
-      },
-    });
+    res.json({ token, user: toAuthUser(user) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -96,20 +93,7 @@ router.post("/login/wallet", async (req: Request, res: Response) => {
       { userId: user._id, role: user.role },
       process.env.JWT_SECRET as string,
     );
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        walletAddress: user.walletAddress,
-        name: user.name,
-        about: user.about,
-        website: user.website,
-        linkedin: user.linkedin,
-        twitter: user.twitter,
-        role: user.role,
-        walletVerifiedAt: user.walletVerifiedAt,
-      },
-    });
+    res.json({ token, user: toAuthUser(user) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

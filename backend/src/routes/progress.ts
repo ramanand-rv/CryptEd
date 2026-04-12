@@ -5,6 +5,10 @@ import Course from "../models/Course.js";
 import User from "../models/User.js";
 import { mintCourseCompletionNFT } from "../services/metaplex.js";
 import { distributeReward } from "../services/reward.js";
+import {
+  asCourseIdString,
+  hasCertificateForCourse,
+} from "../services/certificates.js";
 
 const router = express.Router();
 
@@ -29,6 +33,8 @@ router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
   try {
     const { chapterIndex, quizScore } = req.body;
     const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ msg: "Unauthorized" });
+
     const courseId = req.params.courseId;
 
     let progress = await Progress.findOne({ userId, courseId });
@@ -37,7 +43,7 @@ router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
         userId,
         courseId,
         completedChapters: [],
-        quizScores: {},
+        quizScores: [],
       });
     }
 
@@ -59,46 +65,78 @@ router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
     // Check if course is completed
     const course = await Course.findById(courseId).populate("educatorId");
     if (!course) return res.status(404).json({ msg: "Course not found" });
+    const educatorId = course.educatorId
+      ? String((course.educatorId as any)?._id ?? course.educatorId)
+      : undefined;
+    const educator = educatorId ? await User.findById(educatorId) : null;
+    const educatorWalletVerified = Boolean(educator?.walletVerifiedAt);
 
-    const totalChapters = course.content.length;
-    const isCompleted =
+    const totalChapters = course.content.length || 0;
+    const isCompletedNow =
+      totalChapters > 0 &&
       progress.completedChapters.length >= totalChapters &&
       !progress.completedAt;
 
-    if (isCompleted) {
-      progress.completedAt = new Date();
-      const educatorId = course.educatorId
-        ? String((course.educatorId as any)?._id ?? course.educatorId)
-        : undefined;
-      const educator = educatorId ? await User.findById(educatorId) : null;
-      const educatorWalletVerified = Boolean(educator?.walletVerifiedAt);
+    const learner = await User.findById(userId);
+    if (!learner) return res.status(404).json({ msg: "User not found" });
 
-      // Mint NFT if metadata URI exists
-      if (course.nftMetadataUri && educatorWalletVerified) {
-        try {
-          // Get learner's wallet address (assuming user has walletAddress field)
-          const user = await User.findById(userId);
-          if (user?.walletAddress) {
-            const mintAddress = await mintCourseCompletionNFT(
-              user.walletAddress,
-              course.nftMetadataUri,
-              course.title,
-            );
-            // Store mint address in user's ownedNFTs
-            await User.findByIdAndUpdate(userId, {
-              $push: { ownedNFTs: mintAddress },
-            });
-          }
-        } catch (err) {
-          console.error("NFT minting failed:", err);
-          // Don't fail the whole request, just log error
-        }
+    let shouldPersistLearner = false;
+
+    if (isCompletedNow) {
+      progress.completedAt = new Date();
+      const existingCompletion = learner.completedCourses.some(
+        (entry) => entry.courseId?.toString() === asCourseIdString(course._id),
+      );
+      if (!existingCompletion) {
+        learner.completedCourses.push({
+          courseId: course._id,
+          completedAt: progress.completedAt,
+        });
+        shouldPersistLearner = true;
       }
-      if (userId && educatorWalletVerified) {
+
+      if (educatorWalletVerified) {
         await distributeReward(courseId, userId);
       }
     }
 
+    const hasCourseCompletion = learner.completedCourses.some(
+      (entry) => entry.courseId?.toString() === asCourseIdString(course._id),
+    );
+    const alreadyMintedForCourse = hasCertificateForCourse(
+      learner.ownedNFTs as unknown[],
+      course._id,
+    );
+    const canMintCertificate =
+      hasCourseCompletion &&
+      !alreadyMintedForCourse &&
+      Boolean(learner.walletAddress) &&
+      Boolean(course.nftMetadataUri) &&
+      educatorWalletVerified;
+
+    if (canMintCertificate) {
+      try {
+        const mintAddress = await mintCourseCompletionNFT(
+          learner.walletAddress!,
+          course.nftMetadataUri!,
+          course.title,
+        );
+        learner.ownedNFTs.push({
+          mintAddress,
+          courseId: course._id,
+          courseTitle: course.title,
+          metadataUri: course.nftMetadataUri,
+          mintedAt: new Date(),
+        });
+        shouldPersistLearner = true;
+      } catch (err) {
+        console.error("NFT minting failed:", err);
+      }
+    }
+
+    if (shouldPersistLearner) {
+      await learner.save();
+    }
     await progress.save();
     res.json(progress);
   } catch (err: any) {

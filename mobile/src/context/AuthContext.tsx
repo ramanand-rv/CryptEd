@@ -6,6 +6,14 @@ interface User {
   walletAddress: string;
   name: string;
   role: string;
+  ownedNFTs?: Array<{
+    mintAddress: string;
+    courseId?: string;
+    courseTitle?: string;
+    mintedAt?: string;
+    verifyUrl?: string;
+    explorerUrl?: string;
+  }>;
 }
 
 interface AuthContextType {

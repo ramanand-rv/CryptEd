@@ -4,12 +4,20 @@ import Course, { ICourse } from "../models/Course.js";
 import User from "../models/User.js";
 import { generateQuizQuestions } from "../services/ai.js";
 import Purchase from "../models/Purchase.js";
+import LessonDiscussion from "../models/LessonDiscussion.js";
 
 const router = express.Router();
 
 // Extend Request to include user from auth middleware
 interface AuthRequest extends Request {
   user?: { userId: string; role: string };
+}
+
+interface LessonBlock {
+  type?: string;
+  attrs?: {
+    lessonId?: string;
+  };
 }
 
 const getConnectedWalletAddress = (req: AuthRequest) => {
@@ -46,6 +54,106 @@ const ensureWalletConnectedAndVerified = async (
 
   return educator;
 };
+
+const getLessonIds = (course: ICourse) => {
+  const blocks = Array.isArray(course.content)
+    ? (course.content as LessonBlock[])
+    : [];
+
+  return blocks
+    .filter((block) => block?.type === "lesson")
+    .map((block) => block?.attrs?.lessonId?.trim() || "")
+    .filter((lessonId) => lessonId.length > 0);
+};
+
+const isValidLessonForCourse = (course: ICourse, lessonId: string) => {
+  const normalizedLessonId = lessonId.trim();
+  if (!normalizedLessonId) return false;
+
+  const lessonIds = getLessonIds(course);
+  if (lessonIds.length > 0) {
+    return lessonIds.includes(normalizedLessonId);
+  }
+
+  const match = /^chapter-(\d+)$/.exec(normalizedLessonId);
+  if (!match) return false;
+  const chapterIndex = Number.parseInt(match[1], 10);
+  if (!Number.isInteger(chapterIndex) || chapterIndex < 0) return false;
+  return chapterIndex < (course.content?.length || 0);
+};
+
+const canAccessLessonDiscussions = async (req: AuthRequest, course: ICourse) => {
+  const userId = req.user?.userId;
+  const role = req.user?.role;
+
+  if (!userId || !role) {
+    return { allowed: false, status: 401, msg: "Unauthorized" };
+  }
+
+  if (role === "educator") {
+    const isOwner = String(course.educatorId) === userId;
+    if (!isOwner) {
+      return { allowed: false, status: 403, msg: "Not authorized" };
+    }
+    return { allowed: true, status: 200 };
+  }
+
+  if (role !== "learner") {
+    return { allowed: false, status: 403, msg: "Not authorized" };
+  }
+
+  if (course.status !== "published") {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Course discussions are available after publishing.",
+    };
+  }
+
+  if ((course.price || 0) <= 0) {
+    return { allowed: true, status: 200 };
+  }
+
+  const hasPurchased = await Purchase.exists({
+    userId,
+    courseId: course._id,
+  });
+  if (!hasPurchased) {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Purchase required to join lesson discussions.",
+    };
+  }
+
+  return { allowed: true, status: 200 };
+};
+
+const toDiscussionResponse = (discussion: any) => ({
+  _id: discussion._id,
+  courseId: discussion.courseId,
+  lessonId: discussion.lessonId,
+  question: discussion.question,
+  status: discussion.status,
+  askedBy: {
+    id: discussion.askedById,
+    name: discussion.askedByName,
+    role: discussion.askedByRole,
+  },
+  replies: (discussion.replies || []).map((reply: any) => ({
+    _id: reply._id,
+    message: reply.message,
+    author: {
+      id: reply.authorId,
+      name: reply.authorName,
+      role: reply.authorRole,
+    },
+    createdAt: reply.createdAt,
+    updatedAt: reply.updatedAt,
+  })),
+  createdAt: discussion.createdAt,
+  updatedAt: discussion.updatedAt,
+});
 
 // Create a course (educator only)
 router.post("/", auth, async (req: AuthRequest, res: Response) => {
@@ -222,6 +330,181 @@ router.post("/generate-quiz", auth, async (req: AuthRequest, res: Response) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Get lesson discussions
+router.get(
+  "/:id/lessons/:lessonId/discussions",
+  auth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const lessonId = String(req.params.lessonId || "").trim();
+      if (!lessonId) {
+        return res.status(400).json({ msg: "Lesson ID is required" });
+      }
+
+      const course = await Course.findById(req.params.id);
+      if (!course) return res.status(404).json({ msg: "Course not found" });
+
+      if (!isValidLessonForCourse(course, lessonId)) {
+        return res.status(404).json({ msg: "Lesson not found" });
+      }
+
+      const access = await canAccessLessonDiscussions(req, course);
+      if (!access.allowed) {
+        return res.status(access.status).json({ msg: access.msg });
+      }
+
+      const discussions = await LessonDiscussion.find({
+        courseId: course._id,
+        lessonId,
+      }).sort({ createdAt: -1 });
+
+      res.json({
+        discussions: discussions.map((discussion) =>
+          toDiscussionResponse(discussion),
+        ),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Create a learner question in lesson discussion
+router.post(
+  "/:id/lessons/:lessonId/discussions",
+  auth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (req.user?.role !== "learner") {
+        return res
+          .status(403)
+          .json({ msg: "Only learners can post lesson questions" });
+      }
+
+      const lessonId = String(req.params.lessonId || "").trim();
+      const question = String(req.body?.question || "").trim();
+
+      if (!lessonId) {
+        return res.status(400).json({ msg: "Lesson ID is required" });
+      }
+      if (!question) {
+        return res.status(400).json({ msg: "Question is required" });
+      }
+      if (question.length > 1200) {
+        return res
+          .status(400)
+          .json({ msg: "Question must be 1200 characters or fewer" });
+      }
+
+      const course = await Course.findById(req.params.id);
+      if (!course) return res.status(404).json({ msg: "Course not found" });
+
+      if (!isValidLessonForCourse(course, lessonId)) {
+        return res.status(404).json({ msg: "Lesson not found" });
+      }
+
+      const access = await canAccessLessonDiscussions(req, course);
+      if (!access.allowed) {
+        return res.status(access.status).json({ msg: access.msg });
+      }
+
+      const user = await User.findById(req.user.userId).select("name role");
+      const discussion = new LessonDiscussion({
+        courseId: course._id,
+        lessonId,
+        question,
+        askedById: req.user.userId,
+        askedByName: user?.name?.trim() || "Learner",
+        askedByRole: req.user.role,
+        status: "open",
+        replies: [],
+      });
+
+      await discussion.save();
+
+      res.status(201).json({
+        discussion: toDiscussionResponse(discussion),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Reply to a lesson discussion (educator owner only)
+router.post(
+  "/:id/lessons/:lessonId/discussions/:discussionId/replies",
+  auth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (req.user?.role !== "educator") {
+        return res
+          .status(403)
+          .json({ msg: "Only educators can reply to lesson questions" });
+      }
+
+      const lessonId = String(req.params.lessonId || "").trim();
+      const discussionId = String(req.params.discussionId || "").trim();
+      const message = String(req.body?.message || "").trim();
+
+      if (!lessonId) {
+        return res.status(400).json({ msg: "Lesson ID is required" });
+      }
+      if (!discussionId) {
+        return res.status(400).json({ msg: "Discussion ID is required" });
+      }
+      if (!message) {
+        return res.status(400).json({ msg: "Reply message is required" });
+      }
+      if (message.length > 1200) {
+        return res
+          .status(400)
+          .json({ msg: "Reply must be 1200 characters or fewer" });
+      }
+
+      const course = await Course.findById(req.params.id);
+      if (!course) return res.status(404).json({ msg: "Course not found" });
+
+      if (String(course.educatorId) !== req.user.userId) {
+        return res.status(403).json({ msg: "Not authorized" });
+      }
+
+      if (!isValidLessonForCourse(course, lessonId)) {
+        return res.status(404).json({ msg: "Lesson not found" });
+      }
+
+      const discussion = await LessonDiscussion.findOne({
+        _id: discussionId,
+        courseId: course._id,
+        lessonId,
+      });
+      if (!discussion) {
+        return res.status(404).json({ msg: "Discussion thread not found" });
+      }
+
+      const user = await User.findById(req.user.userId).select("name role");
+
+      discussion.replies.push({
+        message,
+        authorId: req.user.userId as any,
+        authorName: user?.name?.trim() || "Educator",
+        authorRole: "educator",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      discussion.status = "open";
+      await discussion.save();
+
+      res.status(201).json({
+        discussion: toDiscussionResponse(discussion),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 // Course metrics (educator owner only)
 router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {

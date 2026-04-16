@@ -19,10 +19,39 @@ interface QuizPayload {
   questions: any[];
 }
 
+interface DiscussionAuthor {
+  id: string;
+  name: string;
+  role: "educator" | "learner";
+}
+
+interface DiscussionReply {
+  _id: string;
+  message: string;
+  author: DiscussionAuthor;
+  createdAt: string;
+}
+
+interface DiscussionThread {
+  _id: string;
+  lessonId: string;
+  question: string;
+  askedBy: DiscussionAuthor;
+  replies: DiscussionReply[];
+  createdAt: string;
+}
+
 const createId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const formatDateTime = (value?: string) => {
+  if (!value) return "Unknown time";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Unknown time";
+  return parsed.toLocaleString();
+};
 
 const pendingQuizKey = (courseId: string) => `pending-quiz:${courseId}`;
 const editingQuizKey = (courseId: string) => `edit-quiz:${courseId}`;
@@ -63,6 +92,13 @@ const CourseLessonEditor: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [blocks, setBlocks] = useState<any[]>([]);
+  const [discussionLoading, setDiscussionLoading] = useState(false);
+  const [discussionError, setDiscussionError] = useState<string | null>(null);
+  const [discussionThreads, setDiscussionThreads] = useState<DiscussionThread[]>(
+    [],
+  );
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replyingThreadId, setReplyingThreadId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchLesson = async () => {
@@ -121,6 +157,39 @@ const CourseLessonEditor: React.FC = () => {
       console.error("Failed to apply pending quiz", err);
     }
   }, [id, lessonId]);
+
+  useEffect(() => {
+    const fetchLessonDiscussions = async () => {
+      if (!id || !lessonId || !token) return;
+      setDiscussionLoading(true);
+      setDiscussionError(null);
+
+      try {
+        const res = await api.get(
+          `/courses/${id}/lessons/${encodeURIComponent(lessonId)}/discussions`,
+          {
+            headers: { "x-auth-token": token },
+          },
+        );
+        const nextThreads = Array.isArray(res.data?.discussions)
+          ? (res.data.discussions as DiscussionThread[])
+          : [];
+        setDiscussionThreads(nextThreads);
+      } catch (err: any) {
+        console.error(err);
+        const message =
+          err?.response?.data?.msg ||
+          err?.response?.data?.error ||
+          "Unable to load lesson discussions.";
+        setDiscussionError(message);
+        setDiscussionThreads([]);
+      } finally {
+        setDiscussionLoading(false);
+      }
+    };
+
+    fetchLessonDiscussions();
+  }, [id, lessonId, token]);
 
   const openQuizBuilder = (quiz?: QuizPayload) => {
     if (!id || !lessonId) return;
@@ -190,6 +259,42 @@ const CourseLessonEditor: React.FC = () => {
       setError(message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReply = async (threadId: string) => {
+    if (!id || !lessonId || !token) return;
+    const message = (replyDrafts[threadId] || "").trim();
+    if (!message) return;
+
+    setReplyingThreadId(threadId);
+    setDiscussionError(null);
+    try {
+      const res = await api.post(
+        `/courses/${id}/lessons/${encodeURIComponent(lessonId)}/discussions/${threadId}/replies`,
+        { message },
+        { headers: { "x-auth-token": token } },
+      );
+      const updatedDiscussion = res.data?.discussion as
+        | DiscussionThread
+        | undefined;
+      if (updatedDiscussion?._id) {
+        setDiscussionThreads((prev) =>
+          prev.map((thread) =>
+            thread._id === updatedDiscussion._id ? updatedDiscussion : thread,
+          ),
+        );
+      }
+      setReplyDrafts((prev) => ({ ...prev, [threadId]: "" }));
+    } catch (err: any) {
+      console.error(err);
+      const messageText =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to post reply.";
+      setDiscussionError(messageText);
+    } finally {
+      setReplyingThreadId(null);
     }
   };
 
@@ -278,6 +383,130 @@ const CourseLessonEditor: React.FC = () => {
             />
           </div>
         </div>
+
+        <section className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Lesson discussion
+              </h2>
+              <p className="text-xs text-slate-500">
+                Reply to learner questions for this lesson.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!id || !lessonId || !token) return;
+                setDiscussionLoading(true);
+                setDiscussionError(null);
+                api
+                  .get(
+                    `/courses/${id}/lessons/${encodeURIComponent(lessonId)}/discussions`,
+                    {
+                      headers: { "x-auth-token": token },
+                    },
+                  )
+                  .then((res) => {
+                    const nextThreads = Array.isArray(res.data?.discussions)
+                      ? (res.data.discussions as DiscussionThread[])
+                      : [];
+                    setDiscussionThreads(nextThreads);
+                  })
+                  .catch((err: any) => {
+                    const message =
+                      err?.response?.data?.msg ||
+                      err?.response?.data?.error ||
+                      "Unable to refresh lesson discussions.";
+                    setDiscussionError(message);
+                  })
+                  .finally(() => setDiscussionLoading(false));
+              }}
+              disabled={discussionLoading}
+              className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 transition disabled:opacity-60"
+            >
+              {discussionLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+
+          {discussionError && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {discussionError}
+            </div>
+          )}
+
+          {!discussionLoading && discussionThreads.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500 text-center">
+              No learner questions yet for this lesson.
+            </div>
+          )}
+
+          <div className="space-y-4">
+            {discussionThreads.map((thread) => (
+              <article
+                key={thread._id}
+                className="rounded-2xl border border-slate-200 bg-white p-4"
+              >
+                <p className="text-xs text-slate-500">
+                  {thread.askedBy?.name || "Learner"} •{" "}
+                  {formatDateTime(thread.createdAt)}
+                </p>
+                <p className="text-sm text-slate-900 font-medium mt-2">
+                  {thread.question}
+                </p>
+
+                <div className="mt-3 space-y-3">
+                  {thread.replies.length === 0 ? (
+                    <p className="text-xs text-slate-500">
+                      No replies yet. Add guidance for the learner.
+                    </p>
+                  ) : (
+                    thread.replies.map((reply) => (
+                      <div
+                        key={reply._id}
+                        className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2"
+                      >
+                        <p className="text-xs text-emerald-700">
+                          {reply.author?.name || "Educator"} •{" "}
+                          {formatDateTime(reply.createdAt)}
+                        </p>
+                        <p className="text-sm text-slate-700 mt-1">
+                          {reply.message}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <textarea
+                    value={replyDrafts[thread._id] || ""}
+                    onChange={(e) =>
+                      setReplyDrafts((prev) => ({
+                        ...prev,
+                        [thread._id]: e.target.value,
+                      }))
+                    }
+                    rows={3}
+                    placeholder="Write a helpful reply..."
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleReply(thread._id)}
+                    disabled={
+                      replyingThreadId === thread._id ||
+                      !(replyDrafts[thread._id] || "").trim()
+                    }
+                    className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-60"
+                  >
+                    {replyingThreadId === thread._id ? "Sending..." : "Reply"}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
       </div>
     </div>
   );

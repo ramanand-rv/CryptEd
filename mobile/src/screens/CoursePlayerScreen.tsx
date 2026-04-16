@@ -6,12 +6,63 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
 } from "react-native";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import ContentRenderer from "../components/ContentRenderer";
 import Quiz from "../components/Quiz";
 import ConfettiCannon from "react-native-confetti-cannon"; // Import confetti
+
+const API_BASE_URL = "http://localhost:5000/api";
+
+interface DiscussionAuthor {
+  id: string;
+  name: string;
+  role: "learner" | "educator";
+}
+
+interface DiscussionReply {
+  _id: string;
+  message: string;
+  author: DiscussionAuthor;
+  createdAt: string;
+}
+
+interface DiscussionThread {
+  _id: string;
+  lessonId: string;
+  question: string;
+  askedBy: DiscussionAuthor;
+  replies: DiscussionReply[];
+  createdAt: string;
+}
+
+const getLessonDiscussionId = (block: any, chapterIndex: number) => {
+  const nestedLessonId = block?.attrs?.lessonId;
+  if (block?.type === "lesson" && typeof nestedLessonId === "string") {
+    const trimmed = nestedLessonId.trim();
+    if (trimmed) return trimmed;
+  }
+  return `chapter-${chapterIndex}`;
+};
+
+const getLessonDisplayTitle = (block: any, chapterIndex: number) => {
+  const title = block?.attrs?.title;
+  if (typeof title === "string" && title.trim()) {
+    return title.trim();
+  }
+  return `Chapter ${chapterIndex + 1}`;
+};
+
+const formatDateTime = (value?: string) => {
+  if (!value) return "Unknown time";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Unknown time";
+  return parsed.toLocaleString();
+};
 
 const CoursePlayerScreen = ({ route, navigation }: any) => {
   const { courseId } = route.params;
@@ -23,7 +74,14 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const [currentChapter, setCurrentChapter] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false); // New state
-  const { token } = useAuth();
+  const [discussionThreads, setDiscussionThreads] = useState<DiscussionThread[]>(
+    [],
+  );
+  const [discussionLoading, setDiscussionLoading] = useState(false);
+  const [discussionError, setDiscussionError] = useState<string | null>(null);
+  const [questionText, setQuestionText] = useState("");
+  const [postingQuestion, setPostingQuestion] = useState(false);
+  const { token, user } = useAuth();
 
   useEffect(() => {
     fetchCourseAndProgress();
@@ -32,8 +90,8 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const fetchCourseAndProgress = async () => {
     try {
       const [courseRes, progressRes] = await Promise.all([
-        axios.get(`http://localhost:5000/api/courses/${courseId}`),
-        axios.get(`http://localhost:5000/api/progress/${courseId}`, {
+        axios.get(`${API_BASE_URL}/courses/${courseId}`),
+        axios.get(`${API_BASE_URL}/progress/${courseId}`, {
           headers: { "x-auth-token": token },
         }),
       ]);
@@ -56,7 +114,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const handleChapterComplete = async () => {
     try {
       await axios.post(
-        `http://localhost:5000/api/progress/${courseId}`,
+        `${API_BASE_URL}/progress/${courseId}`,
         {
           chapterIndex: currentChapter,
         },
@@ -90,7 +148,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const handleQuizComplete = async (score: number) => {
     try {
       await axios.post(
-        `http://localhost:5000/api/progress/${courseId}`,
+        `${API_BASE_URL}/progress/${courseId}`,
         {
           chapterIndex: currentChapter,
           quizScore: score,
@@ -123,6 +181,81 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     }
   };
 
+  const fetchLessonDiscussions = async () => {
+    if (!course || !token) return;
+    const block = course.content?.[currentChapter];
+    if (!block) {
+      setDiscussionThreads([]);
+      return;
+    }
+
+    const lessonId = getLessonDiscussionId(block, currentChapter);
+    setDiscussionLoading(true);
+    setDiscussionError(null);
+
+    try {
+      const res = await axios.get(
+        `${API_BASE_URL}/courses/${courseId}/lessons/${encodeURIComponent(lessonId)}/discussions`,
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+      const nextThreads = Array.isArray(res.data?.discussions)
+        ? (res.data.discussions as DiscussionThread[])
+        : [];
+      setDiscussionThreads(nextThreads);
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to load lesson discussion.";
+      setDiscussionError(message);
+      setDiscussionThreads([]);
+    } finally {
+      setDiscussionLoading(false);
+    }
+  };
+
+  const handlePostQuestion = async () => {
+    if (!course || !token) return;
+    const question = questionText.trim();
+    if (!question) {
+      Alert.alert("Question required", "Please type your question first.");
+      return;
+    }
+
+    const block = course.content?.[currentChapter];
+    const lessonId = getLessonDiscussionId(block, currentChapter);
+    setPostingQuestion(true);
+
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/courses/${courseId}/lessons/${encodeURIComponent(lessonId)}/discussions`,
+        { question },
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+      const newDiscussion = res.data?.discussion as DiscussionThread | undefined;
+      if (newDiscussion?._id) {
+        setDiscussionThreads((prev) => [newDiscussion, ...prev]);
+      }
+      setQuestionText("");
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to post question.";
+      Alert.alert("Unable to post", message);
+    } finally {
+      setPostingQuestion(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLessonDiscussions();
+  }, [course, currentChapter, token]);
+
   if (loading)
     return (
       <View style={styles.container}>
@@ -137,6 +270,8 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     );
 
   const block = course.content[currentChapter];
+  const lessonTitle = getLessonDisplayTitle(block, currentChapter);
+  const canAskQuestion = user?.role === "learner";
 
   return (
     <ScrollView style={styles.container}>
@@ -157,6 +292,82 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         </>
       )}
 
+      <View style={styles.discussionSection}>
+        <Text style={styles.discussionTitle}>Q&A for {lessonTitle}</Text>
+        <Text style={styles.discussionSubtitle}>
+          Ask questions in-context. Educators can reply in-thread.
+        </Text>
+
+        {canAskQuestion && (
+          <View style={styles.askContainer}>
+            <TextInput
+              value={questionText}
+              onChangeText={setQuestionText}
+              placeholder="Ask a question about this lesson..."
+              multiline
+              style={styles.askInput}
+            />
+            <TouchableOpacity
+              onPress={handlePostQuestion}
+              disabled={postingQuestion}
+              style={[
+                styles.askButton,
+                postingQuestion ? styles.askButtonDisabled : null,
+              ]}
+            >
+              <Text style={styles.askButtonText}>
+                {postingQuestion ? "Posting..." : "Post question"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {discussionLoading && (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color="#0f766e" />
+            <Text style={styles.loadingText}>Loading discussion...</Text>
+          </View>
+        )}
+
+        {!discussionLoading && discussionError ? (
+          <Text style={styles.errorText}>{discussionError}</Text>
+        ) : null}
+
+        {!discussionLoading &&
+          !discussionError &&
+          discussionThreads.length === 0 && (
+            <Text style={styles.emptyText}>
+              No questions yet. Start the discussion.
+            </Text>
+          )}
+
+        {!discussionLoading &&
+          !discussionError &&
+          discussionThreads.map((thread) => (
+            <View key={thread._id} style={styles.threadCard}>
+              <Text style={styles.threadMeta}>
+                {thread.askedBy?.name || "Learner"} •{" "}
+                {formatDateTime(thread.createdAt)}
+              </Text>
+              <Text style={styles.threadQuestion}>{thread.question}</Text>
+
+              {thread.replies.length === 0 ? (
+                <Text style={styles.noReplyText}>No educator reply yet.</Text>
+              ) : (
+                thread.replies.map((reply) => (
+                  <View key={reply._id} style={styles.replyCard}>
+                    <Text style={styles.replyMeta}>
+                      {reply.author?.name || "Educator"} •{" "}
+                      {formatDateTime(reply.createdAt)}
+                    </Text>
+                    <Text style={styles.replyText}>{reply.message}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+          ))}
+      </View>
+
       {/* Confetti animation */}
       {showConfetti && (
         <ConfettiCannon
@@ -174,6 +385,109 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   chapterIndicator: { fontSize: 16, color: "#666", marginBottom: 16 },
   buttonContainer: { marginVertical: 20, alignItems: "center" },
+  discussionSection: {
+    marginTop: 8,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: "#f8fafc",
+    borderColor: "#e2e8f0",
+    borderWidth: 1,
+    marginBottom: 24,
+  },
+  discussionTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  discussionSubtitle: {
+    marginTop: 6,
+    color: "#475569",
+    fontSize: 13,
+    marginBottom: 12,
+  },
+  askContainer: {
+    marginBottom: 12,
+  },
+  askInput: {
+    minHeight: 82,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 10,
+    padding: 10,
+    textAlignVertical: "top",
+    backgroundColor: "#fff",
+  },
+  askButton: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    backgroundColor: "#0f766e",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  askButtonDisabled: {
+    opacity: 0.6,
+  },
+  askButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  loadingText: {
+    color: "#475569",
+    fontSize: 13,
+    marginLeft: 8,
+  },
+  errorText: {
+    color: "#b91c1c",
+    fontSize: 13,
+  },
+  emptyText: {
+    color: "#64748b",
+    fontSize: 13,
+  },
+  threadCard: {
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: "#fff",
+    marginTop: 10,
+  },
+  threadMeta: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 6,
+  },
+  threadQuestion: {
+    fontSize: 14,
+    color: "#0f172a",
+    fontWeight: "600",
+  },
+  noReplyText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "#94a3b8",
+  },
+  replyCard: {
+    marginTop: 8,
+    marginLeft: 10,
+    paddingLeft: 10,
+    borderLeftColor: "#cbd5e1",
+    borderLeftWidth: 2,
+  },
+  replyMeta: {
+    fontSize: 12,
+    color: "#0f766e",
+    marginBottom: 3,
+  },
+  replyText: {
+    fontSize: 13,
+    color: "#334155",
+  },
 });
 
 export default CoursePlayerScreen;

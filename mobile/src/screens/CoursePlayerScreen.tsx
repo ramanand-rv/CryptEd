@@ -40,6 +40,23 @@ interface DiscussionThread {
   createdAt: string;
 }
 
+interface AdaptiveQuizQuestion {
+  question: string;
+  options: string[];
+  correct: number;
+}
+
+interface AdaptiveQuizPayload {
+  mode: "remedial" | "follow-up";
+  chapterIndex: number;
+  trigger: {
+    latestScore: number;
+    averageScore: number;
+    attempts: number;
+  };
+  questions: AdaptiveQuizQuestion[];
+}
+
 const getLessonDiscussionId = (block: any, chapterIndex: number) => {
   const nestedLessonId = block?.attrs?.lessonId;
   if (block?.type === "lesson" && typeof nestedLessonId === "string") {
@@ -69,8 +86,11 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const [course, setCourse] = useState<any>(null);
   const [progress, setProgress] = useState<any>({
     completedChapters: [],
-    quizScores: {},
+    quizScores: [],
   });
+  const [adaptiveQuiz, setAdaptiveQuiz] = useState<AdaptiveQuizPayload | null>(
+    null,
+  );
   const [currentChapter, setCurrentChapter] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false); // New state
@@ -96,10 +116,25 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         }),
       ]);
       setCourse(courseRes.data);
-      setProgress(progressRes.data);
+      setAdaptiveQuiz(null);
+
+      const completedChapters = Array.isArray(
+        progressRes.data?.completedChapters,
+      )
+        ? progressRes.data.completedChapters
+        : [];
+      const quizScores = Array.isArray(progressRes.data?.quizScores)
+        ? progressRes.data.quizScores
+        : [];
+
+      setProgress({
+        ...(progressRes.data || {}),
+        completedChapters,
+        quizScores,
+      });
 
       // Resume from first incomplete chapter
-      const completed = progressRes.data.completedChapters || [];
+      const completed = completedChapters;
       const firstIncomplete = completed.length;
       setCurrentChapter(
         firstIncomplete < courseRes.data.content.length ? firstIncomplete : 0,
@@ -109,6 +144,29 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const moveToNextChapterOrComplete = () => {
+    if (currentChapter + 1 < course.content.length) {
+      setCurrentChapter((prev) => prev + 1);
+      return;
+    }
+
+    setShowConfetti(true);
+    Alert.alert("Congratulations!", "You have completed the course!");
+  };
+
+  const syncProgressFromResponse = (data: any) => {
+    setProgress((prev: any) => ({
+      ...prev,
+      ...(data || {}),
+      completedChapters: Array.isArray(data?.completedChapters)
+        ? data.completedChapters
+        : prev.completedChapters,
+      quizScores: Array.isArray(data?.quizScores)
+        ? data.quizScores
+        : prev.quizScores,
+    }));
   };
 
   const handleChapterComplete = async () => {
@@ -126,19 +184,12 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       // Update local progress
       setProgress((prev: any) => ({
         ...prev,
-        completedChapters: [...prev.completedChapters, currentChapter],
+        completedChapters: Array.from(
+          new Set([...(prev.completedChapters || []), currentChapter]),
+        ),
       }));
 
-      // Move to next chapter if available
-      if (currentChapter + 1 < course.content.length) {
-        setCurrentChapter((prev) => prev + 1);
-      } else {
-        // Course completed!
-        setShowConfetti(true); // Trigger confetti
-        Alert.alert("Congratulations!", "You have completed the course!");
-        // can do: navigate back to course list after a delay
-        // setTimeout(() => navigation.goBack(), 3000);
-      }
+      moveToNextChapterOrComplete();
     } catch (err) {
       console.error(err);
       Alert.alert("Error", "Failed to save progress");
@@ -147,7 +198,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
 
   const handleQuizComplete = async (score: number) => {
     try {
-      await axios.post(
+      const res = await axios.post(
         `${API_BASE_URL}/progress/${courseId}`,
         {
           chapterIndex: currentChapter,
@@ -158,26 +209,62 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         },
       );
 
-      Alert.alert("Quiz completed!", `Your score: ${score.toFixed(0)}%`);
+      syncProgressFromResponse(res.data);
 
-      // Update local progress
-      setProgress((prev: any) => ({
-        ...prev,
-        completedChapters: [...prev.completedChapters, currentChapter],
-        quizScores: { ...prev.quizScores, [currentChapter]: score },
-      }));
+      const adaptiveCandidate = res.data?.adaptiveQuiz;
+      const hasAdaptiveQuestions =
+        adaptiveCandidate &&
+        Array.isArray(adaptiveCandidate.questions) &&
+        adaptiveCandidate.questions.length > 0;
 
-      // Move to next chapter
-      if (currentChapter + 1 < course.content.length) {
-        setCurrentChapter((prev) => prev + 1);
-      } else {
-        // Course completed!
-        setShowConfetti(true); // Trigger confetti
-        Alert.alert("Congratulations!", "You have completed the course!");
+      if (hasAdaptiveQuestions) {
+        setAdaptiveQuiz(adaptiveCandidate as AdaptiveQuizPayload);
+        const modeLabel =
+          adaptiveCandidate.mode === "remedial" ? "Remedial" : "Follow-up";
+        Alert.alert(
+          `${modeLabel} quiz ready`,
+          `Your score: ${score.toFixed(0)}%. We've prepared a tailored practice quiz.`,
+        );
+        return;
       }
+
+      Alert.alert("Quiz completed!", `Your score: ${score.toFixed(0)}%`);
+      moveToNextChapterOrComplete();
     } catch (err) {
       console.error(err);
       Alert.alert("Error", "Failed to save quiz score");
+    }
+  };
+
+  const handleAdaptiveQuizComplete = async (score: number) => {
+    if (!adaptiveQuiz) return;
+    const adaptiveMode = adaptiveQuiz.mode;
+
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/progress/${courseId}`,
+        {
+          chapterIndex: currentChapter,
+          quizScore: score,
+          isAdaptiveAttempt: true,
+        },
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+
+      syncProgressFromResponse(res.data);
+      setAdaptiveQuiz(null);
+
+      const modeLabel = adaptiveMode === "remedial" ? "Remedial" : "Follow-up";
+      Alert.alert(
+        `${modeLabel} quiz completed!`,
+        `Your score: ${score.toFixed(0)}%`,
+      );
+      moveToNextChapterOrComplete();
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", "Failed to save adaptive quiz score");
     }
   };
 
@@ -272,6 +359,14 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const block = course.content[currentChapter];
   const lessonTitle = getLessonDisplayTitle(block, currentChapter);
   const canAskQuestion = user?.role === "learner";
+  const isAdaptiveQuizActive =
+    block?.type === "quiz" &&
+    adaptiveQuiz?.chapterIndex === currentChapter &&
+    Array.isArray(adaptiveQuiz?.questions) &&
+    adaptiveQuiz.questions.length > 0;
+  const activeQuizQuestions = isAdaptiveQuizActive
+    ? adaptiveQuiz?.questions || []
+    : block?.attrs?.questions || [];
 
   return (
     <ScrollView style={styles.container}>
@@ -279,10 +374,35 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         Chapter {currentChapter + 1} of {course.content.length}
       </Text>
       {block.type === "quiz" ? (
-        <Quiz
-          questions={block.attrs?.questions || []}
-          onComplete={handleQuizComplete}
-        />
+        activeQuizQuestions.length > 0 ? (
+          <>
+            {isAdaptiveQuizActive && (
+              <View style={styles.adaptiveBanner}>
+                <Text style={styles.adaptiveBannerTitle}>
+                  {adaptiveQuiz?.mode === "remedial"
+                    ? "Remedial Practice"
+                    : "Follow-up Practice"}
+                </Text>
+                <Text style={styles.adaptiveBannerText}>
+                  These AI-generated questions are tailored to your quiz scores.
+                </Text>
+              </View>
+            )}
+            <Quiz
+              questions={activeQuizQuestions}
+              onComplete={
+                isAdaptiveQuizActive ? handleAdaptiveQuizComplete : handleQuizComplete
+              }
+            />
+          </>
+        ) : (
+          <View style={styles.buttonContainer}>
+            <Text style={styles.emptyText}>
+              No quiz questions available for this chapter.
+            </Text>
+            <Button title="Continue" onPress={moveToNextChapterOrComplete} />
+          </View>
+        )
       ) : (
         <>
           <ContentRenderer blocks={[block]} />
@@ -385,6 +505,24 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   chapterIndicator: { fontSize: 16, color: "#666", marginBottom: 16 },
   buttonContainer: { marginVertical: 20, alignItems: "center" },
+  adaptiveBanner: {
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    backgroundColor: "#ecfeff",
+  },
+  adaptiveBannerTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#115e59",
+  },
+  adaptiveBannerText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#0f766e",
+  },
   discussionSection: {
     marginTop: 8,
     padding: 14,

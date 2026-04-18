@@ -10,6 +10,17 @@ import bs58 from "bs58";
 import Course from "../models/Course.js";
 import User from "../models/User.js";
 
+type WinnerEntry =
+  | string
+  | { toString(): string }
+  | {
+      userId?: string | { toString(): string };
+      walletAddress?: string;
+      amount?: number;
+      txSignature?: string;
+      awardedAt?: Date | string;
+    };
+
 const connection = new Connection(
   process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com",
 );
@@ -24,6 +35,15 @@ const getFeePayer = () => {
   return Keypair.fromSecretKey(new Uint8Array(secretKey));
 };
 
+const getWinnerUserId = (winner: WinnerEntry): string => {
+  if (winner && typeof winner === "object" && "userId" in winner) {
+    const rawUserId = winner.userId;
+    if (!rawUserId) return "";
+    return rawUserId.toString();
+  }
+  return winner ? winner.toString() : "";
+};
+
 export async function distributeReward(courseId: string, userId: string) {
   const course = await Course.findById(courseId);
   if (!course || !course.rewardPool) return;
@@ -32,16 +52,20 @@ export async function distributeReward(courseId: string, userId: string) {
   if (!educator?.walletVerifiedAt) return;
 
   const { totalAmount, remaining, winnersCount, winners } = course.rewardPool;
+  const eligibleWinners = Math.max(0, winnersCount || 0);
+  if (eligibleWinners <= 0) return;
   if (remaining <= 0) return;
 
   // Check if user already won
-  if (winners.includes(userId as any)) return;
+  if (winners.some((winner) => getWinnerUserId(winner as WinnerEntry) === userId)) {
+    return;
+  }
 
   // Check if winners count reached
-  if (winners.length >= winnersCount) return;
+  if (winners.length >= eligibleWinners) return;
 
   // Determine reward amount (simple equal split for demo)
-  const rewardAmount = Math.floor(totalAmount / winnersCount);
+  const rewardAmount = Math.floor(totalAmount / eligibleWinners);
 
   if (rewardAmount <= 0) return;
 
@@ -65,8 +89,14 @@ export async function distributeReward(courseId: string, userId: string) {
     await connection.confirmTransaction(signature, "confirmed");
 
     // Update course reward pool
-    course.rewardPool.remaining -= rewardAmount;
-    course.rewardPool.winners.push(userId as any);
+    course.rewardPool.remaining = Math.max(0, course.rewardPool.remaining - rewardAmount);
+    course.rewardPool.winners.push({
+      userId: user._id,
+      walletAddress: user.walletAddress,
+      amount: rewardAmount,
+      txSignature: signature,
+      awardedAt: new Date(),
+    } as any);
     await course.save();
 
     console.log(

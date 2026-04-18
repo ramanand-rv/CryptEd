@@ -20,6 +20,117 @@ interface LessonBlock {
   };
 }
 
+interface NormalizedWinner {
+  userId: string;
+  walletAddress?: string;
+  amount: number;
+  txSignature?: string;
+  awardedAt: Date | null;
+}
+
+const normalizeWinner = (winner: any): NormalizedWinner | null => {
+  if (!winner) return null;
+
+  const winnerObject = winner?.toObject?.() || winner;
+  const hasStructuredWinner =
+    typeof winnerObject === "object" && winnerObject !== null && "userId" in winnerObject;
+
+  const rawUserId = hasStructuredWinner ? winnerObject.userId : winnerObject;
+  if (!rawUserId) return null;
+
+  const userId = String(rawUserId?._id ?? rawUserId).trim();
+  if (!userId) return null;
+
+  const rawAmount = hasStructuredWinner ? winnerObject.amount : null;
+  const amount = typeof rawAmount === "number" && Number.isFinite(rawAmount) ? rawAmount : 0;
+
+  const awardedAtRaw = hasStructuredWinner ? winnerObject.awardedAt : null;
+  const awardedAt =
+    awardedAtRaw instanceof Date
+      ? awardedAtRaw
+      : typeof awardedAtRaw === "string"
+        ? new Date(awardedAtRaw)
+        : null;
+
+  return {
+    userId,
+    walletAddress:
+      hasStructuredWinner && typeof winnerObject.walletAddress === "string"
+        ? winnerObject.walletAddress
+        : undefined,
+    amount,
+    txSignature:
+      hasStructuredWinner && typeof winnerObject.txSignature === "string"
+        ? winnerObject.txSignature
+        : undefined,
+    awardedAt: awardedAt && !Number.isNaN(awardedAt.getTime()) ? awardedAt : null,
+  };
+};
+
+const getRewardSnapshot = async (course: ICourse) => {
+  const rewardPool = course.rewardPool;
+  if (!rewardPool || (rewardPool.totalAmount || 0) <= 0) {
+    return {
+      totalAmount: 0,
+      remaining: 0,
+      winnersCount: 0,
+      paidOut: 0,
+      totalWinners: 0,
+      winners: [],
+      recentWinners: [],
+    };
+  }
+
+  const normalizedWinners = (rewardPool.winners || [])
+    .map((winner) => normalizeWinner(winner))
+    .filter((winner): winner is NormalizedWinner => Boolean(winner));
+
+  const winnerIds = Array.from(
+    new Set(
+      normalizedWinners
+        .map((winner) => winner.userId)
+        .filter((winnerId) => winnerId.length > 0),
+    ),
+  );
+
+  const winnerUsers = await User.find({ _id: { $in: winnerIds } })
+    .select("name walletAddress")
+    .lean();
+  const winnerMap = new Map(
+    winnerUsers.map((winner) => [String(winner._id), winner]),
+  );
+
+  const winners = normalizedWinners
+    .map((winner) => {
+      const winnerUser = winnerMap.get(winner.userId);
+      return {
+        userId: winner.userId,
+        name: winnerUser?.name || "Learner",
+        walletAddress: winner.walletAddress || winnerUser?.walletAddress || "",
+        amount: winner.amount,
+        txSignature: winner.txSignature || "",
+        awardedAt: winner.awardedAt,
+      };
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.awardedAt || 0).getTime() - new Date(a.awardedAt || 0).getTime(),
+    );
+
+  const totalAmount = rewardPool.totalAmount || 0;
+  const remaining = Math.max(0, rewardPool.remaining || 0);
+
+  return {
+    totalAmount,
+    remaining,
+    winnersCount: rewardPool.winnersCount || 0,
+    paidOut: Math.max(0, totalAmount - remaining),
+    totalWinners: winners.length,
+    winners,
+    recentWinners: winners.slice(0, 5),
+  };
+};
+
 const getConnectedWalletAddress = (req: AuthRequest) => {
   const raw = req.header("x-wallet-address");
   return typeof raw === "string" ? raw.trim() : "";
@@ -248,6 +359,42 @@ router.get("/metrics/overview", auth, async (req: AuthRequest, res: Response) =>
         : 0,
     }));
 
+    const rewardCourses = await Promise.all(
+      courses.map(async (course) => ({
+        course,
+        snapshot: await getRewardSnapshot(course),
+      })),
+    );
+    const rewardSnapshots = rewardCourses
+      .map((entry) => entry.snapshot)
+      .filter((snapshot) => snapshot.totalAmount > 0);
+
+    const rewardTotals = rewardCourses.reduce(
+      (acc, entry) => {
+        acc.totalPool += entry.snapshot.totalAmount;
+        acc.remaining += entry.snapshot.remaining;
+        acc.paidOut += entry.snapshot.paidOut;
+        acc.winners += entry.snapshot.winners.length;
+        return acc;
+      },
+      { totalPool: 0, remaining: 0, paidOut: 0, winners: 0 },
+    );
+
+    const recentWinners = rewardCourses
+      .filter((entry) => entry.snapshot.totalAmount > 0)
+      .flatMap((entry) =>
+        entry.snapshot.winners.map((winner) => ({
+          ...winner,
+          courseId: String(entry.course._id),
+          courseTitle: entry.course.title,
+        })),
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.awardedAt || 0).getTime() - new Date(a.awardedAt || 0).getTime(),
+      )
+      .slice(0, 8);
+
     res.json({
       totals: {
         courses: courses.length,
@@ -257,6 +404,13 @@ router.get("/metrics/overview", auth, async (req: AuthRequest, res: Response) =>
       },
       salesByMonth,
       viewsByMonth,
+      rewards: {
+        totalPool: rewardTotals.totalPool,
+        remaining: rewardTotals.remaining,
+        paidOut: rewardTotals.paidOut,
+        winners: rewardTotals.winners,
+      },
+      recentWinners,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -525,6 +679,8 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
       ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
       : 0;
 
+    const rewardSnapshot = await getRewardSnapshot(course);
+
     res.json({
       course: {
         id: course._id,
@@ -532,6 +688,13 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
         description: course.description,
         price: course.price,
         status: course.status,
+        rewardPool: {
+          totalAmount: rewardSnapshot.totalAmount,
+          remaining: rewardSnapshot.remaining,
+          winnersCount: rewardSnapshot.winnersCount,
+          paidOut: rewardSnapshot.paidOut,
+          totalWinners: rewardSnapshot.totalWinners,
+        },
       },
       metrics: {
         views: course.views || 0,
@@ -541,6 +704,7 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
         avgRating,
       },
       reviews: course.reviews || [],
+      recentWinners: rewardSnapshot.recentWinners,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -556,7 +720,19 @@ router.get("/:id", async (req: Request, res: Response) => {
       { new: true },
     ).populate("educatorId", "name email");
     if (!course) return res.status(404).json({ msg: "Course not found" });
-    res.json(course);
+    const rewardSnapshot = await getRewardSnapshot(course);
+    const courseObject = course.toObject();
+    res.json({
+      ...courseObject,
+      rewardPool: {
+        totalAmount: rewardSnapshot.totalAmount,
+        remaining: rewardSnapshot.remaining,
+        winnersCount: rewardSnapshot.winnersCount,
+        paidOut: rewardSnapshot.paidOut,
+        totalWinners: rewardSnapshot.totalWinners,
+      },
+      recentWinners: rewardSnapshot.recentWinners,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

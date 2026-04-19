@@ -7,8 +7,12 @@ import {
   Transaction,
   SystemProgram,
   PublicKey,
-  LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
+
+const shortenWallet = (address?: string) =>
+  address && address.length > 12
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : address || "Wallet unavailable";
 
 const CourseDetailScreen = ({ route, navigation }: any) => {
   const { courseId } = route.params;
@@ -122,6 +126,33 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
       <Text style={styles.description}>{course.description}</Text>
       <Text style={styles.price}>Price: {course.price / 1e9} SOL</Text>
       <Text>Educator: {course.educatorId?.name}</Text>
+      {(course.rewardPool?.totalAmount || 0) > 0 && (
+        <View style={styles.rewardsCard}>
+          <Text style={styles.rewardsTitle}>Reward Pool</Text>
+          <Text style={styles.rewardsText}>
+            Total: {(course.rewardPool.totalAmount / 1e9).toFixed(2)} SOL
+          </Text>
+          <Text style={styles.rewardsText}>
+            Remaining: {(course.rewardPool.remaining / 1e9).toFixed(2)} SOL
+          </Text>
+          <Text style={styles.rewardsText}>
+            Winners: {course.rewardPool.totalWinners || 0}/
+            {course.rewardPool.winnersCount || 0}
+          </Text>
+          <Text style={styles.rewardsSubtitle}>Recent winners</Text>
+          {(course.recentWinners || []).length === 0 ? (
+            <Text style={styles.rewardsMuted}>No payouts yet.</Text>
+          ) : (
+            (course.recentWinners || []).map((winner: any, index: number) => (
+              <Text key={`${winner.userId}-${index}`} style={styles.rewardsText}>
+                {winner.name || "Learner"} won{" "}
+                {((winner.amount || 0) / 1e9).toFixed(3)} SOL (
+                {shortenWallet(winner.walletAddress)})
+              </Text>
+            ))
+          )}
+        </View>
+      )}
       {connected && (
         <Text>
           Wallet: {publicKey?.toBase58().slice(0, 8)}... Balance: {balance} SOL
@@ -146,6 +177,19 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: "bold", marginBottom: 8 },
   description: { fontSize: 16, marginBottom: 16 },
   price: { fontSize: 18, color: "#2ecc71", marginBottom: 8 },
+  rewardsCard: {
+    marginTop: 12,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+  },
+  rewardsTitle: { fontSize: 16, fontWeight: "700", marginBottom: 6 },
+  rewardsSubtitle: { marginTop: 8, fontWeight: "600" },
+  rewardsText: { fontSize: 13, color: "#065f46", marginTop: 2 },
+  rewardsMuted: { fontSize: 13, color: "#6b7280" },
 });
 
 export default CourseDetailScreen;

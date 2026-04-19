@@ -9,6 +9,13 @@ interface CourseMetricsResponse {
     title: string;
     description: string;
     status?: "draft" | "published";
+    rewardPool?: {
+      totalAmount: number;
+      remaining: number;
+      winnersCount: number;
+      paidOut: number;
+      totalWinners: number;
+    };
   };
   metrics: {
     views: number;
@@ -23,7 +30,20 @@ interface CourseMetricsResponse {
     comment?: string;
     createdAt: string;
   }>;
+  recentWinners: Array<{
+    userId: string;
+    name: string;
+    walletAddress?: string;
+    amount: number;
+    txSignature?: string;
+    awardedAt?: string;
+  }>;
 }
+
+const shortenWallet = (address?: string) =>
+  address && address.length > 12
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : address || "Wallet unavailable";
 
 const TrendLine: React.FC<{ values: number[]; color: string }> = ({
   values,
@@ -197,6 +217,75 @@ const CourseDashboard: React.FC = () => {
               </p>
             </div>
           ))}
+        </section>
+
+        <section className="grid lg:grid-cols-2 gap-6">
+          <div className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+            <p className="text-xs uppercase text-slate-400">Reward Pool</p>
+            <h2 className="text-lg font-semibold text-slate-900 mt-1">
+              Payout progress
+            </h2>
+            <div className="mt-4 space-y-2 text-sm text-slate-600">
+              <p>
+                Total pool:{" "}
+                <span className="font-semibold text-slate-900">
+                  {((data.course.rewardPool?.totalAmount || 0) / 1e9).toFixed(2)} SOL
+                </span>
+              </p>
+              <p>
+                Paid out:{" "}
+                <span className="font-semibold text-slate-900">
+                  {((data.course.rewardPool?.paidOut || 0) / 1e9).toFixed(2)} SOL
+                </span>
+              </p>
+              <p>
+                Remaining:{" "}
+                <span className="font-semibold text-slate-900">
+                  {((data.course.rewardPool?.remaining || 0) / 1e9).toFixed(2)} SOL
+                </span>
+              </p>
+              <p>
+                Winners:{" "}
+                <span className="font-semibold text-slate-900">
+                  {data.course.rewardPool?.totalWinners || 0} /{" "}
+                  {data.course.rewardPool?.winnersCount || 0}
+                </span>
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+            <p className="text-xs uppercase text-slate-400">Leaderboard</p>
+            <h2 className="text-lg font-semibold text-slate-900 mt-1">
+              Recent winners
+            </h2>
+            <div className="mt-4 space-y-3">
+              {data.recentWinners.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                  No payouts yet. Winners will appear after course completion.
+                </div>
+              ) : (
+                data.recentWinners.map((winner, index) => (
+                  <div
+                    key={`${winner.userId}-${winner.awardedAt || index}`}
+                    className="rounded-2xl border border-slate-100 bg-white p-4"
+                  >
+                    <p className="text-sm font-semibold text-slate-900">
+                      {winner.name} won {(winner.amount / 1e9).toFixed(3)} SOL
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {shortenWallet(winner.walletAddress)}
+                    </p>
+                    {winner.awardedAt && (
+                      <p className="text-xs text-slate-400 mt-1">
+                        {new Date(winner.awardedAt).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="grid lg:grid-cols-[1.2fr_1fr] gap-6">

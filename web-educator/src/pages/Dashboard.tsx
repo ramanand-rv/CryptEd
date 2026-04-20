@@ -11,6 +11,11 @@ interface Course {
   createdAt: string;
   views?: number;
   status?: "draft" | "published";
+  rewardPool?: {
+    totalAmount: number;
+    remaining: number;
+    winnersCount: number;
+  };
 }
 
 interface MetricPoint {
@@ -27,7 +32,28 @@ interface OverviewMetrics {
   };
   salesByMonth: MetricPoint[];
   viewsByMonth: MetricPoint[];
+  rewards?: {
+    totalPool: number;
+    remaining: number;
+    paidOut: number;
+    winners: number;
+  };
+  recentWinners?: Array<{
+    userId: string;
+    name: string;
+    walletAddress?: string;
+    amount: number;
+    txSignature?: string;
+    awardedAt?: string;
+    courseId: string;
+    courseTitle: string;
+  }>;
 }
+
+const shortenWallet = (address?: string) =>
+  address && address.length > 12
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : address || "Wallet unavailable";
 
 const LineChart: React.FC<{
   data: MetricPoint[];
@@ -227,6 +253,13 @@ const Dashboard: React.FC = () => {
                   </div>
                 ))}
               </div>
+              <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                Rewards paid:{" "}
+                <span className="font-semibold">
+                  {((metrics?.rewards?.paidOut || 0) / 1e9).toFixed(2)} SOL
+                </span>{" "}
+                across {metrics?.rewards?.winners || 0} winners.
+              </div>
             </div>
           </div>
 
@@ -317,6 +350,76 @@ const Dashboard: React.FC = () => {
                   <span key={point.label}>{point.label}</span>
                 ))}
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid lg:grid-cols-2 gap-6">
+          <div className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+            <p className="text-xs uppercase text-slate-400">Rewards</p>
+            <h3 className="text-lg font-semibold text-slate-900 mt-1">
+              Reward pool leaderboard
+            </h3>
+            <div className="mt-4 space-y-3">
+              {[...courses]
+                .sort(
+                  (a, b) =>
+                    (b.rewardPool?.totalAmount || 0) -
+                    (a.rewardPool?.totalAmount || 0),
+                )
+                .slice(0, 4)
+                .map((course) => {
+                  const total = course.rewardPool?.totalAmount || 0;
+                  const remaining = course.rewardPool?.remaining || 0;
+                  const paidOut = Math.max(0, total - remaining);
+                  return (
+                    <div
+                      key={course._id}
+                      className="rounded-2xl border border-slate-100 bg-white px-4 py-3"
+                    >
+                      <p className="text-sm font-medium text-slate-900">
+                        {course.title}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Paid out {(paidOut / 1e9).toFixed(2)} /{" "}
+                        {(total / 1e9).toFixed(2)} SOL
+                      </p>
+                    </div>
+                  );
+                })}
+              {courses.filter((course) => (course.rewardPool?.totalAmount || 0) > 0)
+                .length === 0 && (
+                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                  No reward pools configured yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+            <p className="text-xs uppercase text-slate-400">Winners</p>
+            <h3 className="text-lg font-semibold text-slate-900 mt-1">
+              Recent winners
+            </h3>
+            <div className="mt-4 space-y-3">
+              {(metrics?.recentWinners || []).map((winner, index) => (
+                <div
+                  key={`${winner.userId}-${winner.awardedAt || index}`}
+                  className="rounded-2xl border border-slate-100 bg-white px-4 py-3"
+                >
+                  <p className="text-sm font-medium text-slate-900">
+                    {winner.name} won {(winner.amount / 1e9).toFixed(3)} SOL
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {winner.courseTitle} • {shortenWallet(winner.walletAddress)}
+                  </p>
+                </div>
+              ))}
+              {(metrics?.recentWinners || []).length === 0 && (
+                <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                  Winners will appear here after learners complete rewarded courses.
+                </div>
+              )}
             </div>
           </div>
         </section>

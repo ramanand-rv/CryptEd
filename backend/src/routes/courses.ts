@@ -711,6 +711,34 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
   }
 });
 
+// Course rewards and leaderboard (public)
+router.get("/:id/rewards", async (req: Request, res: Response) => {
+  try {
+    const course = await Course.findById(req.params.id).select(
+      "_id title rewardPool",
+    );
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    const rewardSnapshot = await getRewardSnapshot(course);
+    res.json({
+      course: {
+        id: course._id,
+        title: course.title,
+      },
+      rewardPool: {
+        totalAmount: rewardSnapshot.totalAmount,
+        remaining: rewardSnapshot.remaining,
+        winnersCount: rewardSnapshot.winnersCount,
+        paidOut: rewardSnapshot.paidOut,
+        totalWinners: rewardSnapshot.totalWinners,
+      },
+      recentWinners: rewardSnapshot.recentWinners,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get a single course by ID
 router.get("/:id", async (req: Request, res: Response) => {
   try {

@@ -40,6 +40,28 @@ interface CourseMetricsResponse {
   }>;
 }
 
+interface CourseRewardsResponse {
+  course: {
+    id: string;
+    title: string;
+  };
+  rewardPool: {
+    totalAmount: number;
+    remaining: number;
+    winnersCount: number;
+    paidOut: number;
+    totalWinners: number;
+  };
+  recentWinners: Array<{
+    userId: string;
+    name: string;
+    walletAddress?: string;
+    amount: number;
+    txSignature?: string;
+    awardedAt?: string;
+  }>;
+}
+
 const shortenWallet = (address?: string) =>
   address && address.length > 12
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
@@ -80,15 +102,20 @@ const CourseDashboard: React.FC = () => {
   const { id } = useParams();
   const { token } = useAuth();
   const [data, setData] = useState<CourseMetricsResponse | null>(null);
+  const [rewards, setRewards] = useState<CourseRewardsResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchMetrics = async () => {
+    const fetchDashboardData = async () => {
       try {
-        const res = await api.get(`/courses/${id}/metrics`, {
-          headers: { "x-auth-token": token },
-        });
-        setData(res.data);
+        const [metricsRes, rewardsRes] = await Promise.all([
+          api.get(`/courses/${id}/metrics`, {
+            headers: { "x-auth-token": token },
+          }),
+          api.get(`/courses/${id}/rewards`),
+        ]);
+        setData(metricsRes.data);
+        setRewards(rewardsRes.data);
       } catch (err) {
         console.error(err);
       } finally {
@@ -96,7 +123,7 @@ const CourseDashboard: React.FC = () => {
       }
     };
     if (token && id) {
-      fetchMetrics();
+      fetchDashboardData();
     }
   }, [token, id]);
 
@@ -229,26 +256,26 @@ const CourseDashboard: React.FC = () => {
               <p>
                 Total pool:{" "}
                 <span className="font-semibold text-slate-900">
-                  {((data.course.rewardPool?.totalAmount || 0) / 1e9).toFixed(2)} SOL
+                  {((rewards?.rewardPool?.totalAmount || 0) / 1e9).toFixed(2)} SOL
                 </span>
               </p>
               <p>
                 Paid out:{" "}
                 <span className="font-semibold text-slate-900">
-                  {((data.course.rewardPool?.paidOut || 0) / 1e9).toFixed(2)} SOL
+                  {((rewards?.rewardPool?.paidOut || 0) / 1e9).toFixed(2)} SOL
                 </span>
               </p>
               <p>
                 Remaining:{" "}
                 <span className="font-semibold text-slate-900">
-                  {((data.course.rewardPool?.remaining || 0) / 1e9).toFixed(2)} SOL
+                  {((rewards?.rewardPool?.remaining || 0) / 1e9).toFixed(2)} SOL
                 </span>
               </p>
               <p>
                 Winners:{" "}
                 <span className="font-semibold text-slate-900">
-                  {data.course.rewardPool?.totalWinners || 0} /{" "}
-                  {data.course.rewardPool?.winnersCount || 0}
+                  {rewards?.rewardPool?.totalWinners || 0} /{" "}
+                  {rewards?.rewardPool?.winnersCount || 0}
                 </span>
               </p>
             </div>
@@ -260,12 +287,12 @@ const CourseDashboard: React.FC = () => {
               Recent winners
             </h2>
             <div className="mt-4 space-y-3">
-              {data.recentWinners.length === 0 ? (
+              {(rewards?.recentWinners || []).length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
                   No payouts yet. Winners will appear after course completion.
                 </div>
               ) : (
-                data.recentWinners.map((winner, index) => (
+                (rewards?.recentWinners || []).map((winner, index) => (
                   <div
                     key={`${winner.userId}-${winner.awardedAt || index}`}
                     className="rounded-2xl border border-slate-100 bg-white p-4"

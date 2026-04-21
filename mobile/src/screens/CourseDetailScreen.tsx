@@ -14,9 +14,28 @@ const shortenWallet = (address?: string) =>
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : address || "Wallet unavailable";
 
+interface CourseRewardsResponse {
+  rewardPool: {
+    totalAmount: number;
+    remaining: number;
+    winnersCount: number;
+    paidOut: number;
+    totalWinners: number;
+  };
+  recentWinners: Array<{
+    userId: string;
+    name: string;
+    walletAddress?: string;
+    amount: number;
+    txSignature?: string;
+    awardedAt?: string;
+  }>;
+}
+
 const CourseDetailScreen = ({ route, navigation }: any) => {
   const { courseId } = route.params;
   const [course, setCourse] = useState<any>(null);
+  const [rewards, setRewards] = useState<CourseRewardsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const { token, user } = useAuth();
   const { connected, publicKey, connect, signAndSendTransaction, balance } =
@@ -49,10 +68,12 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
 
   const fetchCourse = async () => {
     try {
-      const res = await axios.get(
-        `http://localhost:5000/api/courses/${courseId}`,
-      );
-      setCourse(res.data);
+      const [courseRes, rewardsRes] = await Promise.all([
+        axios.get(`http://localhost:5000/api/courses/${courseId}`),
+        axios.get(`http://localhost:5000/api/courses/${courseId}/rewards`),
+      ]);
+      setCourse(courseRes.data);
+      setRewards(rewardsRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -126,24 +147,24 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
       <Text style={styles.description}>{course.description}</Text>
       <Text style={styles.price}>Price: {course.price / 1e9} SOL</Text>
       <Text>Educator: {course.educatorId?.name}</Text>
-      {(course.rewardPool?.totalAmount || 0) > 0 && (
+      {(rewards?.rewardPool?.totalAmount || 0) > 0 && (
         <View style={styles.rewardsCard}>
           <Text style={styles.rewardsTitle}>Reward Pool</Text>
           <Text style={styles.rewardsText}>
-            Total: {(course.rewardPool.totalAmount / 1e9).toFixed(2)} SOL
+            Total: {((rewards?.rewardPool?.totalAmount || 0) / 1e9).toFixed(2)} SOL
           </Text>
           <Text style={styles.rewardsText}>
-            Remaining: {(course.rewardPool.remaining / 1e9).toFixed(2)} SOL
+            Remaining: {((rewards?.rewardPool?.remaining || 0) / 1e9).toFixed(2)} SOL
           </Text>
           <Text style={styles.rewardsText}>
-            Winners: {course.rewardPool.totalWinners || 0}/
-            {course.rewardPool.winnersCount || 0}
+            Winners: {rewards?.rewardPool?.totalWinners || 0}/
+            {rewards?.rewardPool?.winnersCount || 0}
           </Text>
           <Text style={styles.rewardsSubtitle}>Recent winners</Text>
-          {(course.recentWinners || []).length === 0 ? (
+          {(rewards?.recentWinners || []).length === 0 ? (
             <Text style={styles.rewardsMuted}>No payouts yet.</Text>
           ) : (
-            (course.recentWinners || []).map((winner: any, index: number) => (
+            (rewards?.recentWinners || []).map((winner, index) => (
               <Text key={`${winner.userId}-${index}`} style={styles.rewardsText}>
                 {winner.name || "Learner"} won{" "}
                 {((winner.amount || 0) / 1e9).toFixed(3)} SOL (

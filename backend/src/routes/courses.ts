@@ -5,6 +5,7 @@ import User from "../models/User.js";
 import { generateQuizQuestions } from "../services/ai.js";
 import Purchase from "../models/Purchase.js";
 import LessonDiscussion from "../models/LessonDiscussion.js";
+import Comment from "../models/Comment.js";
 
 const router = express.Router();
 
@@ -240,6 +241,58 @@ const canAccessLessonDiscussions = async (req: AuthRequest, course: ICourse) => 
   return { allowed: true, status: 200 };
 };
 
+const canAccessCourseComments = async (req: AuthRequest, course: ICourse) => {
+  const userId = req.user?.userId;
+  const role = req.user?.role;
+
+  if (!userId || !role) {
+    return { allowed: false, status: 401, msg: "Unauthorized" };
+  }
+
+  if (role === "educator") {
+    const isOwner = String(course.educatorId) === userId;
+    if (!isOwner) {
+      return { allowed: false, status: 403, msg: "Not authorized" };
+    }
+    return { allowed: true, status: 200 };
+  }
+
+  if (role !== "learner") {
+    return { allowed: false, status: 403, msg: "Not authorized" };
+  }
+
+  if (course.status !== "published") {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Course comments are available after publishing.",
+    };
+  }
+
+  if ((course.price || 0) <= 0) {
+    return { allowed: true, status: 200 };
+  }
+
+  const hasPurchased = await Purchase.exists({
+    userId,
+    courseId: course._id,
+  });
+
+  if (!hasPurchased) {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Purchase required to join comments.",
+    };
+  }
+
+  return { allowed: true, status: 200 };
+};
+
+const isValidBlockIndexForCourse = (course: ICourse, blockIndex: number) => {
+  return Number.isInteger(blockIndex) && blockIndex >= 0 && blockIndex < (course.content?.length || 0);
+};
+
 const toDiscussionResponse = (discussion: any) => ({
   _id: discussion._id,
   courseId: discussion.courseId,
@@ -265,6 +318,84 @@ const toDiscussionResponse = (discussion: any) => ({
   createdAt: discussion.createdAt,
   updatedAt: discussion.updatedAt,
 });
+
+interface CommentAuthorResponse {
+  id: string;
+  name: string;
+  role: "educator" | "learner";
+}
+
+interface CommentResponse {
+  _id: string;
+  courseId: string;
+  blockIndex: number;
+  parentId: string | null;
+  text: string;
+  author: CommentAuthorResponse;
+  createdAt: Date;
+  updatedAt: Date;
+  replies: CommentResponse[];
+}
+
+const buildCommentTree = async (comments: any[]): Promise<CommentResponse[]> => {
+  const userIds = Array.from(
+    new Set(comments.map((comment) => String(comment.userId)).filter(Boolean)),
+  );
+  const users = await User.find({ _id: { $in: userIds } })
+    .select("name role")
+    .lean();
+  const userMap = new Map(users.map((user) => [String(user._id), user]));
+
+  const nodes = new Map<string, CommentResponse>();
+  const roots: CommentResponse[] = [];
+
+  comments.forEach((comment) => {
+    const commentId = String(comment._id);
+    const userId = String(comment.userId);
+    const user = userMap.get(userId);
+    nodes.set(commentId, {
+      _id: commentId,
+      courseId: String(comment.courseId),
+      blockIndex: comment.blockIndex,
+      parentId: comment.parentId ? String(comment.parentId) : null,
+      text: comment.text,
+      author: {
+        id: userId,
+        name: user?.name || "User",
+        role:
+          user?.role === "educator" || user?.role === "learner"
+            ? user.role
+            : "learner",
+      },
+      createdAt: comment.createdAt,
+      updatedAt: comment.updatedAt,
+      replies: [],
+    });
+  });
+
+  nodes.forEach((node) => {
+    if (!node.parentId) {
+      roots.push(node);
+      return;
+    }
+    const parent = nodes.get(node.parentId);
+    if (!parent) {
+      roots.push(node);
+      return;
+    }
+    parent.replies.push(node);
+  });
+
+  const sortTree = (items: CommentResponse[]) => {
+    items.sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+    items.forEach((item) => sortTree(item.replies));
+  };
+
+  sortTree(roots);
+  return roots;
+};
 
 // Create a course (educator only)
 router.post("/", auth, async (req: AuthRequest, res: Response) => {
@@ -659,6 +790,101 @@ router.post(
     }
   },
 );
+
+// Get comments for a specific content block
+router.get("/:id/comments", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const rawBlockIndex = req.query.blockIndex;
+    const blockIndex = Number.parseInt(String(rawBlockIndex ?? ""), 10);
+    if (!Number.isInteger(blockIndex)) {
+      return res.status(400).json({ msg: "Valid blockIndex is required" });
+    }
+
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    if (!isValidBlockIndexForCourse(course, blockIndex)) {
+      return res.status(404).json({ msg: "Block not found" });
+    }
+
+    const access = await canAccessCourseComments(req, course);
+    if (!access.allowed) {
+      return res.status(access.status).json({ msg: access.msg });
+    }
+
+    const comments = await Comment.find({
+      courseId: course._id,
+      blockIndex,
+    })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    const threadedComments = await buildCommentTree(comments);
+    res.json({ comments: threadedComments });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Post a comment or reply for a content block
+router.post("/:id/comments", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const blockIndex = Number.parseInt(String(req.body?.blockIndex ?? ""), 10);
+    const text = String(req.body?.text || "").trim();
+    const parentId = String(req.body?.parentId || "").trim();
+
+    if (!Number.isInteger(blockIndex)) {
+      return res.status(400).json({ msg: "Valid blockIndex is required" });
+    }
+    if (!text) {
+      return res.status(400).json({ msg: "Comment text is required" });
+    }
+    if (text.length > 1200) {
+      return res
+        .status(400)
+        .json({ msg: "Comment must be 1200 characters or fewer" });
+    }
+
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    if (!isValidBlockIndexForCourse(course, blockIndex)) {
+      return res.status(404).json({ msg: "Block not found" });
+    }
+
+    const access = await canAccessCourseComments(req, course);
+    if (!access.allowed) {
+      return res.status(access.status).json({ msg: access.msg });
+    }
+
+    let verifiedParentId: string | null = null;
+    if (parentId) {
+      const parentComment = await Comment.findOne({
+        _id: parentId,
+        courseId: course._id,
+        blockIndex,
+      }).lean();
+      if (!parentComment) {
+        return res.status(404).json({ msg: "Parent comment not found" });
+      }
+      verifiedParentId = String(parentComment._id);
+    }
+
+    const created = await Comment.create({
+      courseId: course._id,
+      blockIndex,
+      parentId: verifiedParentId || null,
+      userId: req.user?.userId,
+      text,
+    });
+
+    const threaded = await buildCommentTree([created.toObject()]);
+    const comment = threaded[0];
+    res.status(201).json({ comment });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Course metrics (educator owner only)
 router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {

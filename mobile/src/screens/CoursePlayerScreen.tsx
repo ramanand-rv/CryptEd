@@ -18,25 +18,19 @@ import ConfettiCannon from "react-native-confetti-cannon"; // Import confetti
 
 const API_BASE_URL = "http://localhost:5000/api";
 
-interface DiscussionAuthor {
+interface CommentAuthor {
   id: string;
   name: string;
   role: "learner" | "educator";
 }
 
-interface DiscussionReply {
+interface CommentThread {
   _id: string;
-  message: string;
-  author: DiscussionAuthor;
-  createdAt: string;
-}
-
-interface DiscussionThread {
-  _id: string;
-  lessonId: string;
-  question: string;
-  askedBy: DiscussionAuthor;
-  replies: DiscussionReply[];
+  blockIndex: number;
+  parentId: string | null;
+  text: string;
+  author: CommentAuthor;
+  replies: CommentThread[];
   createdAt: string;
 }
 
@@ -56,15 +50,6 @@ interface AdaptiveQuizPayload {
   };
   questions: AdaptiveQuizQuestion[];
 }
-
-const getLessonDiscussionId = (block: any, chapterIndex: number) => {
-  const nestedLessonId = block?.attrs?.lessonId;
-  if (block?.type === "lesson" && typeof nestedLessonId === "string") {
-    const trimmed = nestedLessonId.trim();
-    if (trimmed) return trimmed;
-  }
-  return `chapter-${chapterIndex}`;
-};
 
 const getLessonDisplayTitle = (block: any, chapterIndex: number) => {
   const title = block?.attrs?.title;
@@ -94,14 +79,19 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const [currentChapter, setCurrentChapter] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false); // New state
-  const [discussionThreads, setDiscussionThreads] = useState<DiscussionThread[]>(
-    [],
+  const [commentThreads, setCommentThreads] = useState<CommentThread[]>([]);
+  const [commentLoading, setCommentLoading] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const [activeReplyParentId, setActiveReplyParentId] = useState<string | null>(
+    null,
   );
-  const [discussionLoading, setDiscussionLoading] = useState(false);
-  const [discussionError, setDiscussionError] = useState<string | null>(null);
-  const [questionText, setQuestionText] = useState("");
-  const [postingQuestion, setPostingQuestion] = useState(false);
-  const { token, user } = useAuth();
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [postingReplyParentId, setPostingReplyParentId] = useState<string | null>(
+    null,
+  );
+  const { token } = useAuth();
 
   useEffect(() => {
     fetchCourseAndProgress();
@@ -268,79 +258,120 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     }
   };
 
-  const fetchLessonDiscussions = async () => {
+  const appendReplyToTree = (
+    threads: CommentThread[],
+    parentId: string,
+    reply: CommentThread,
+  ): CommentThread[] => {
+    return threads.map((thread) => {
+      if (thread._id === parentId) {
+        return { ...thread, replies: [...(thread.replies || []), reply] };
+      }
+      if (!thread.replies?.length) return thread;
+      return {
+        ...thread,
+        replies: appendReplyToTree(thread.replies, parentId, reply),
+      };
+    });
+  };
+
+  const fetchComments = async () => {
     if (!course || !token) return;
     const block = course.content?.[currentChapter];
     if (!block) {
-      setDiscussionThreads([]);
+      setCommentThreads([]);
       return;
     }
 
-    const lessonId = getLessonDiscussionId(block, currentChapter);
-    setDiscussionLoading(true);
-    setDiscussionError(null);
+    setCommentLoading(true);
+    setCommentError(null);
 
     try {
       const res = await axios.get(
-        `${API_BASE_URL}/courses/${courseId}/lessons/${encodeURIComponent(lessonId)}/discussions`,
+        `${API_BASE_URL}/courses/${courseId}/comments`,
         {
           headers: { "x-auth-token": token },
+          params: { blockIndex: currentChapter },
         },
       );
-      const nextThreads = Array.isArray(res.data?.discussions)
-        ? (res.data.discussions as DiscussionThread[])
+      const nextThreads = Array.isArray(res.data?.comments)
+        ? (res.data.comments as CommentThread[])
         : [];
-      setDiscussionThreads(nextThreads);
+      setCommentThreads(nextThreads);
     } catch (err: any) {
       const message =
         err?.response?.data?.msg ||
         err?.response?.data?.error ||
-        "Failed to load lesson discussion.";
-      setDiscussionError(message);
-      setDiscussionThreads([]);
+        "Failed to load comments.";
+      setCommentError(message);
+      setCommentThreads([]);
     } finally {
-      setDiscussionLoading(false);
+      setCommentLoading(false);
     }
   };
 
-  const handlePostQuestion = async () => {
+  const handlePostComment = async (parentId?: string) => {
     if (!course || !token) return;
-    const question = questionText.trim();
-    if (!question) {
-      Alert.alert("Question required", "Please type your question first.");
+    const text = parentId
+      ? (replyDrafts[parentId] || "").trim()
+      : commentText.trim();
+    if (!text) {
+      Alert.alert("Comment required", "Please type your message first.");
       return;
     }
 
-    const block = course.content?.[currentChapter];
-    const lessonId = getLessonDiscussionId(block, currentChapter);
-    setPostingQuestion(true);
+    if (parentId) {
+      setPostingReplyParentId(parentId);
+    } else {
+      setPostingComment(true);
+    }
 
     try {
       const res = await axios.post(
-        `${API_BASE_URL}/courses/${courseId}/lessons/${encodeURIComponent(lessonId)}/discussions`,
-        { question },
+        `${API_BASE_URL}/courses/${courseId}/comments`,
+        {
+          blockIndex: currentChapter,
+          text,
+          ...(parentId ? { parentId } : {}),
+        },
         {
           headers: { "x-auth-token": token },
         },
       );
-      const newDiscussion = res.data?.discussion as DiscussionThread | undefined;
-      if (newDiscussion?._id) {
-        setDiscussionThreads((prev) => [newDiscussion, ...prev]);
+      const createdComment = res.data?.comment as CommentThread | undefined;
+      if (createdComment?._id) {
+        if (createdComment.parentId) {
+          setCommentThreads((prev) =>
+            appendReplyToTree(prev, createdComment.parentId!, createdComment),
+          );
+        } else {
+          setCommentThreads((prev) => [...prev, createdComment]);
+        }
       }
-      setQuestionText("");
+
+      if (parentId) {
+        setReplyDrafts((prev) => ({ ...prev, [parentId]: "" }));
+        setActiveReplyParentId(null);
+      } else {
+        setCommentText("");
+      }
     } catch (err: any) {
       const message =
         err?.response?.data?.msg ||
         err?.response?.data?.error ||
-        "Failed to post question.";
+        "Failed to post comment.";
       Alert.alert("Unable to post", message);
     } finally {
-      setPostingQuestion(false);
+      if (parentId) {
+        setPostingReplyParentId(null);
+      } else {
+        setPostingComment(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchLessonDiscussions();
+    fetchComments();
   }, [course, currentChapter, token]);
 
   if (loading)
@@ -358,7 +389,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
 
   const block = course.content[currentChapter];
   const lessonTitle = getLessonDisplayTitle(block, currentChapter);
-  const canAskQuestion = user?.role === "learner";
+  const canComment = Boolean(token);
   const isAdaptiveQuizActive =
     block?.type === "quiz" &&
     adaptiveQuiz?.chapterIndex === currentChapter &&
@@ -367,6 +398,63 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const activeQuizQuestions = isAdaptiveQuizActive
     ? adaptiveQuiz?.questions || []
     : block?.attrs?.questions || [];
+
+  const renderCommentThread = (thread: CommentThread, depth = 0): React.ReactNode => {
+    const isReplying = activeReplyParentId === thread._id;
+    return (
+      <View
+        key={thread._id}
+        style={[styles.threadCard, depth > 0 ? styles.threadReplyDepth : null]}
+      >
+        <Text style={styles.threadMeta}>
+          {thread.author?.name || "User"} • {formatDateTime(thread.createdAt)}
+        </Text>
+        <Text style={styles.threadQuestion}>{thread.text}</Text>
+
+        <TouchableOpacity
+          onPress={() =>
+            setActiveReplyParentId((prev) =>
+              prev === thread._id ? null : thread._id,
+            )
+          }
+        >
+          <Text style={styles.replyAction}>
+            {isReplying ? "Cancel" : "Reply"}
+          </Text>
+        </TouchableOpacity>
+
+        {isReplying && (
+          <View style={styles.askContainer}>
+            <TextInput
+              value={replyDrafts[thread._id] || ""}
+              onChangeText={(value) =>
+                setReplyDrafts((prev) => ({ ...prev, [thread._id]: value }))
+              }
+              placeholder="Write a reply..."
+              multiline
+              style={styles.askInput}
+            />
+            <TouchableOpacity
+              onPress={() => handlePostComment(thread._id)}
+              disabled={postingReplyParentId === thread._id}
+              style={[
+                styles.askButton,
+                postingReplyParentId === thread._id
+                  ? styles.askButtonDisabled
+                  : null,
+              ]}
+            >
+              <Text style={styles.askButtonText}>
+                {postingReplyParentId === thread._id ? "Posting..." : "Post reply"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {(thread.replies || []).map((reply) => renderCommentThread(reply, depth + 1))}
+      </View>
+    );
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -413,79 +501,53 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       )}
 
       <View style={styles.discussionSection}>
-        <Text style={styles.discussionTitle}>Q&A for {lessonTitle}</Text>
+        <Text style={styles.discussionTitle}>Comments for {lessonTitle}</Text>
         <Text style={styles.discussionSubtitle}>
-          Ask questions in-context. Educators can reply in-thread.
+          Discuss this lesson with threaded comments.
         </Text>
 
-        {canAskQuestion && (
+        {canComment && (
           <View style={styles.askContainer}>
             <TextInput
-              value={questionText}
-              onChangeText={setQuestionText}
-              placeholder="Ask a question about this lesson..."
+              value={commentText}
+              onChangeText={setCommentText}
+              placeholder="Write a comment about this lesson..."
               multiline
               style={styles.askInput}
             />
             <TouchableOpacity
-              onPress={handlePostQuestion}
-              disabled={postingQuestion}
+              onPress={() => handlePostComment()}
+              disabled={postingComment}
               style={[
                 styles.askButton,
-                postingQuestion ? styles.askButtonDisabled : null,
+                postingComment ? styles.askButtonDisabled : null,
               ]}
             >
               <Text style={styles.askButtonText}>
-                {postingQuestion ? "Posting..." : "Post question"}
+                {postingComment ? "Posting..." : "Post comment"}
               </Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {discussionLoading && (
+        {commentLoading && (
           <View style={styles.loadingRow}>
             <ActivityIndicator size="small" color="#0f766e" />
-            <Text style={styles.loadingText}>Loading discussion...</Text>
+            <Text style={styles.loadingText}>Loading comments...</Text>
           </View>
         )}
 
-        {!discussionLoading && discussionError ? (
-          <Text style={styles.errorText}>{discussionError}</Text>
+        {!commentLoading && commentError ? (
+          <Text style={styles.errorText}>{commentError}</Text>
         ) : null}
 
-        {!discussionLoading &&
-          !discussionError &&
-          discussionThreads.length === 0 && (
-            <Text style={styles.emptyText}>
-              No questions yet. Start the discussion.
-            </Text>
-          )}
+        {!commentLoading && !commentError && commentThreads.length === 0 && (
+          <Text style={styles.emptyText}>No comments yet. Start the discussion.</Text>
+        )}
 
-        {!discussionLoading &&
-          !discussionError &&
-          discussionThreads.map((thread) => (
-            <View key={thread._id} style={styles.threadCard}>
-              <Text style={styles.threadMeta}>
-                {thread.askedBy?.name || "Learner"} •{" "}
-                {formatDateTime(thread.createdAt)}
-              </Text>
-              <Text style={styles.threadQuestion}>{thread.question}</Text>
-
-              {thread.replies.length === 0 ? (
-                <Text style={styles.noReplyText}>No educator reply yet.</Text>
-              ) : (
-                thread.replies.map((reply) => (
-                  <View key={reply._id} style={styles.replyCard}>
-                    <Text style={styles.replyMeta}>
-                      {reply.author?.name || "Educator"} •{" "}
-                      {formatDateTime(reply.createdAt)}
-                    </Text>
-                    <Text style={styles.replyText}>{reply.message}</Text>
-                  </View>
-                ))
-              )}
-            </View>
-          ))}
+        {!commentLoading &&
+          !commentError &&
+          commentThreads.map((thread) => renderCommentThread(thread))}
       </View>
 
       {/* Confetti animation */}
@@ -605,26 +667,16 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     fontWeight: "600",
   },
-  noReplyText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#94a3b8",
-  },
-  replyCard: {
-    marginTop: 8,
-    marginLeft: 10,
-    paddingLeft: 10,
-    borderLeftColor: "#cbd5e1",
+  threadReplyDepth: {
+    marginLeft: 12,
     borderLeftWidth: 2,
+    borderLeftColor: "#cbd5e1",
   },
-  replyMeta: {
+  replyAction: {
+    marginTop: 8,
     fontSize: 12,
+    fontWeight: "600",
     color: "#0f766e",
-    marginBottom: 3,
-  },
-  replyText: {
-    fontSize: 13,
-    color: "#334155",
   },
 });
 

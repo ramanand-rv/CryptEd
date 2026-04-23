@@ -85,6 +85,41 @@ const upsertQuizBlock = (content: JSONContent, quiz: QuizPayload): JSONContent =
   };
 };
 
+interface CommentAuthor {
+  id: string;
+  name: string;
+  role: "educator" | "learner";
+}
+
+interface CommentNode {
+  _id: string;
+  courseId: string;
+  blockIndex: number;
+  parentId: string | null;
+  text: string;
+  author: CommentAuthor;
+  createdAt: string;
+  updatedAt: string;
+  replies: CommentNode[];
+}
+
+const addReplyToTree = (
+  tree: CommentNode[],
+  parentId: string,
+  comment: CommentNode,
+): CommentNode[] => {
+  return tree.map((node) => {
+    if (node._id === parentId) {
+      return { ...node, replies: [...(node.replies || []), comment] };
+    }
+    if (!node.replies?.length) return node;
+    return {
+      ...node,
+      replies: addReplyToTree(node.replies, parentId, comment),
+    };
+  });
+};
+
 const CourseContents: React.FC = () => {
   const { id } = useParams();
   const { token, user } = useAuth();
@@ -119,6 +154,16 @@ const CourseContents: React.FC = () => {
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">(
     "idle",
   );
+  const [comments, setComments] = useState<CommentNode[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [newCommentText, setNewCommentText] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [activeReplyParentId, setActiveReplyParentId] = useState<string | null>(
+    null,
+  );
+  const [postingReplyFor, setPostingReplyFor] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -303,6 +348,10 @@ const CourseContents: React.FC = () => {
     () => lessons.find((lesson) => lesson.id === selectedLessonId) || lessons[0],
     [lessons, selectedLessonId],
   );
+  const activeBlockIndex = useMemo(() => {
+    if (!activeLesson) return -1;
+    return lessons.findIndex((lesson) => lesson.id === activeLesson.id);
+  }, [lessons, activeLesson]);
 
   const lessonIds = useMemo(() => lessons.map((lesson) => lesson.id), [lessons]);
 
@@ -519,6 +568,147 @@ const CourseContents: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const fetchComments = async () => {
+    if (!id || !token || activeBlockIndex < 0) return;
+    setCommentsLoading(true);
+    setCommentsError(null);
+    try {
+      const res = await api.get(`/courses/${id}/comments`, {
+        headers: { "x-auth-token": token },
+        params: { blockIndex: activeBlockIndex },
+      });
+      const nextComments = Array.isArray(res.data?.comments)
+        ? (res.data.comments as CommentNode[])
+        : [];
+      setComments(nextComments);
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Unable to load comments for this lesson.";
+      setCommentsError(message);
+      setComments([]);
+    } finally {
+      setCommentsLoading(false);
+    }
+  };
+
+  const handlePostComment = async (parentId?: string) => {
+    if (!id || !token || activeBlockIndex < 0) return;
+    const draft = parentId
+      ? (replyDrafts[parentId] || "").trim()
+      : newCommentText.trim();
+    if (!draft) return;
+
+    if (parentId) {
+      setPostingReplyFor(parentId);
+    } else {
+      setPostingComment(true);
+    }
+
+    try {
+      const res = await api.post(
+        `/courses/${id}/comments`,
+        {
+          blockIndex: activeBlockIndex,
+          text: draft,
+          ...(parentId ? { parentId } : {}),
+        },
+        { headers: { "x-auth-token": token } },
+      );
+      const created = res.data?.comment as CommentNode | undefined;
+      if (created?._id) {
+        if (created.parentId) {
+          setComments((prev) => addReplyToTree(prev, created.parentId!, created));
+        } else {
+          setComments((prev) => [...prev, created]);
+        }
+      }
+
+      if (parentId) {
+        setReplyDrafts((prev) => ({ ...prev, [parentId]: "" }));
+        setActiveReplyParentId(null);
+      } else {
+        setNewCommentText("");
+      }
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Unable to post comment.";
+      setCommentsError(message);
+    } finally {
+      if (parentId) {
+        setPostingReplyFor(null);
+      } else {
+        setPostingComment(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    fetchComments();
+  }, [id, token, activeBlockIndex]);
+
+  const renderComment = (comment: CommentNode, depth = 0): React.ReactNode => {
+    const isReplying = activeReplyParentId === comment._id;
+    return (
+      <div
+        key={comment._id}
+        className={`rounded-2xl border border-slate-100 bg-white p-4 ${
+          depth > 0 ? "ml-4 mt-3" : "mt-3"
+        }`}
+      >
+        <p className="text-xs text-slate-500">
+          <span className="font-semibold text-slate-700">
+            {comment.author?.name || "User"}
+          </span>{" "}
+          • {new Date(comment.createdAt).toLocaleString()}
+        </p>
+        <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">
+          {comment.text}
+        </p>
+        <button
+          type="button"
+          onClick={() =>
+            setActiveReplyParentId((prev) =>
+              prev === comment._id ? null : comment._id,
+            )
+          }
+          className="mt-2 text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+        >
+          {isReplying ? "Cancel" : "Reply"}
+        </button>
+        {isReplying && (
+          <div className="mt-3 space-y-2">
+            <textarea
+              value={replyDrafts[comment._id] || ""}
+              onChange={(event) =>
+                setReplyDrafts((prev) => ({
+                  ...prev,
+                  [comment._id]: event.target.value,
+                }))
+              }
+              rows={2}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+              placeholder="Write a reply..."
+            />
+            <button
+              type="button"
+              disabled={postingReplyFor === comment._id}
+              onClick={() => handlePostComment(comment._id)}
+              className="rounded-full bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {postingReplyFor === comment._id ? "Posting..." : "Post reply"}
+            </button>
+          </div>
+        )}
+
+        {(comment.replies || []).map((reply) => renderComment(reply, depth + 1))}
+      </div>
+    );
   };
 
   if (loading) {
@@ -772,6 +962,53 @@ const CourseContents: React.FC = () => {
                     onAddQuiz={() => openQuizBuilder(activeLesson)}
                     onEditQuiz={(quiz) => openQuizBuilder(activeLesson, quiz)}
                   />
+                <section className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                    Comments
+                  </p>
+                  <h3 className="text-lg font-semibold text-slate-900 mt-1">
+                    Lesson discussion
+                  </h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Threaded comments for the selected lesson block.
+                  </p>
+
+                  <div className="mt-4 space-y-3">
+                    <textarea
+                      value={newCommentText}
+                      onChange={(event) => setNewCommentText(event.target.value)}
+                      rows={3}
+                      className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                      placeholder="Write a comment..."
+                    />
+                    <button
+                      type="button"
+                      disabled={postingComment}
+                      onClick={() => handlePostComment()}
+                      className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                    >
+                      {postingComment ? "Posting..." : "Post comment"}
+                    </button>
+                  </div>
+
+                  {commentsLoading && (
+                    <p className="mt-4 text-sm text-slate-500">Loading comments...</p>
+                  )}
+
+                  {commentsError && (
+                    <p className="mt-4 text-sm text-rose-600">{commentsError}</p>
+                  )}
+
+                  {!commentsLoading && !commentsError && comments.length === 0 && (
+                    <p className="mt-4 text-sm text-slate-500">
+                      No comments yet for this lesson.
+                    </p>
+                  )}
+
+                  {!commentsLoading &&
+                    !commentsError &&
+                    comments.map((comment) => renderComment(comment))}
+                </section>
               </>
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">

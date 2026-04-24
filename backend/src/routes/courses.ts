@@ -2,7 +2,15 @@ import express, { Request, Response } from "express";
 import auth from "../middleware/auth.js";
 import Course, { ICourse } from "../models/Course.js";
 import User from "../models/User.js";
-import { generateQuizQuestions } from "../services/ai.js";
+import Progress from "../models/Progress.js";
+import {
+  generateQuizQuestions,
+  generateTailoredQuizQuestions,
+  getAdaptiveMode,
+  clampScore,
+  type AdaptiveMode,
+  type QuizSuggestionTrigger,
+} from "../services/ai.js";
 import Purchase from "../models/Purchase.js";
 import LessonDiscussion from "../models/LessonDiscussion.js";
 import Comment from "../models/Comment.js";
@@ -287,6 +295,152 @@ const canAccessCourseComments = async (req: AuthRequest, course: ICourse) => {
   }
 
   return { allowed: true, status: 200 };
+};
+
+const canAccessCourseAiSuggest = async (req: AuthRequest, course: ICourse) => {
+  const userId = req.user?.userId;
+  const role = req.user?.role;
+
+  if (!userId || !role) {
+    return { allowed: false, status: 401, msg: "Unauthorized" };
+  }
+
+  if (role === "educator") {
+    const isOwner = String(course.educatorId) === userId;
+    if (!isOwner) {
+      return { allowed: false, status: 403, msg: "Not authorized" };
+    }
+    return { allowed: true, status: 200 };
+  }
+
+  if (role !== "learner") {
+    return { allowed: false, status: 403, msg: "Not authorized" };
+  }
+
+  if (course.status !== "published") {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "AI suggestions are available after publishing.",
+    };
+  }
+
+  if ((course.price || 0) <= 0) {
+    return { allowed: true, status: 200 };
+  }
+
+  const hasPurchased = await Purchase.exists({
+    userId,
+    courseId: course._id,
+  });
+
+  if (!hasPurchased) {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Purchase required to access AI suggestions.",
+    };
+  }
+
+  return { allowed: true, status: 200 };
+};
+
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const normalizeTags = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((tag) => String(tag).trim())
+      .filter((tag) => tag.length > 0);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0);
+  }
+
+  return [];
+};
+
+const sanitizeQuestionCount = (value: unknown, fallback = 5) => {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null) return fallback;
+  return Math.min(Math.max(Math.round(parsed), 1), 20);
+};
+
+const getChapterContext = (course: ICourse, chapterIndex: number) => {
+  const chapter = Array.isArray(course.content) ? course.content[chapterIndex] : null;
+  const attrs = chapter?.attrs && typeof chapter.attrs === "object" ? chapter.attrs : {};
+
+  const title =
+    typeof attrs.title === "string" && attrs.title.trim()
+      ? attrs.title.trim()
+      : `Chapter ${chapterIndex + 1} - ${course.title}`;
+
+  const description =
+    typeof attrs.description === "string" && attrs.description.trim()
+      ? attrs.description.trim()
+      : course.description;
+
+  const sourceQuestionPrompts = Array.isArray(attrs.questions)
+    ? attrs.questions
+        .map((question: any) =>
+          typeof question?.question === "string" ? question.question.trim() : "",
+        )
+        .filter((question: string) => question.length > 0)
+    : [];
+
+  const sourceQuestionCount = Array.isArray(attrs.questions)
+    ? attrs.questions.length
+    : 0;
+
+  return {
+    title,
+    description,
+    tags: normalizeTags(attrs.tags),
+    sourceQuestionPrompts,
+    sourceQuestionCount,
+  };
+};
+
+const getChapterScoreSummary = (
+  quizScores: any[],
+  chapterIndex: number,
+): QuizSuggestionTrigger | null => {
+  const chapterScores = quizScores
+    .filter((entry) => Number.parseInt(String(entry?.blockIndex), 10) === chapterIndex)
+    .map((entry) => clampScore(Number(entry?.score)))
+    .filter((score) => Number.isFinite(score));
+
+  if (chapterScores.length === 0) {
+    return null;
+  }
+
+  const attempts = chapterScores.length;
+  const latestScore = chapterScores[attempts - 1];
+  const averageScore =
+    chapterScores.reduce((sum, score) => sum + score, 0) / attempts;
+
+  return {
+    latestScore: Number(latestScore.toFixed(2)),
+    averageScore: Number(averageScore.toFixed(2)),
+    attempts,
+  };
 };
 
 const isValidBlockIndexForCourse = (course: ICourse, blockIndex: number) => {
@@ -608,6 +762,131 @@ router.post("/generate-quiz", auth, async (req: AuthRequest, res: Response) => {
       count,
     );
     res.json({ questions });
+  } catch (err: any) {
+    if (err?.message === "GEMINI_API_KEY is not configured") {
+      return res.status(500).json({ msg: err.message });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/:id/ai-suggest", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ msg: "Unauthorized" });
+    }
+
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    const access = await canAccessCourseAiSuggest(req, course);
+    if (!access.allowed) {
+      return res.status(access.status).json({ msg: access.msg });
+    }
+
+    const { chapterIndex, topic, title, description, tags, numQuestions, mode } =
+      req.body || {};
+
+    const parsedChapterIndex = Number.parseInt(String(chapterIndex), 10);
+    const hasValidChapterIndex = isValidBlockIndexForCourse(
+      course,
+      parsedChapterIndex,
+    );
+
+    const chapterContext = hasValidChapterIndex
+      ? getChapterContext(course, parsedChapterIndex)
+      : null;
+
+    const requestedTopic = String(topic || title || "").trim();
+    const requestedDescription = String(description || "").trim();
+    const resolvedTopic =
+      chapterContext?.title ||
+      requestedTopic ||
+      String(course.title || "").trim();
+    const resolvedDescription =
+      chapterContext?.description ||
+      requestedDescription ||
+      String(course.description || "").trim();
+
+    if (!resolvedTopic || !resolvedDescription) {
+      return res.status(400).json({
+        msg: "A valid chapterIndex or topic and description are required",
+      });
+    }
+
+    const normalizedMode: AdaptiveMode | null =
+      mode === "remedial" || mode === "follow-up" ? mode : null;
+
+    let trigger: QuizSuggestionTrigger | null = null;
+    if (req.user?.role === "learner" && hasValidChapterIndex) {
+      const progress = await Progress.findOne({
+        userId,
+        courseId: course._id,
+      })
+        .select("quizScores")
+        .lean();
+      const quizScores = Array.isArray(progress?.quizScores)
+        ? progress.quizScores
+        : [];
+      trigger = getChapterScoreSummary(quizScores, parsedChapterIndex);
+    }
+
+    const adaptiveMode =
+      normalizedMode ||
+      (trigger ? getAdaptiveMode(trigger.latestScore, trigger.averageScore) : null);
+
+    if (req.user?.role === "learner" && hasValidChapterIndex && !adaptiveMode) {
+      return res.json({
+        chapterIndex: parsedChapterIndex,
+        topic: resolvedTopic,
+        description: resolvedDescription,
+        tags: chapterContext?.tags || [],
+        questions: [],
+        adaptive: null,
+      });
+    }
+
+    const baseTags = [
+      ...normalizeTags(tags),
+      ...(chapterContext?.tags || []),
+    ];
+    const tagSet = new Set(baseTags);
+    if (adaptiveMode) {
+      tagSet.add(
+        adaptiveMode === "remedial" ? "remedial-practice" : "follow-up-practice",
+      );
+    }
+
+    const defaultQuestionCount =
+      adaptiveMode && chapterContext
+        ? Math.min(Math.max(chapterContext.sourceQuestionCount || 5, 3), 8)
+        : 5;
+    const count = sanitizeQuestionCount(numQuestions, defaultQuestionCount);
+
+    const questions = await generateTailoredQuizQuestions({
+      topic: resolvedTopic,
+      description: resolvedDescription,
+      tags: Array.from(tagSet),
+      numQuestions: count,
+      mode: adaptiveMode,
+      trigger,
+      focusPrompts: chapterContext?.sourceQuestionPrompts || [],
+    });
+
+    res.json({
+      chapterIndex: hasValidChapterIndex ? parsedChapterIndex : null,
+      topic: resolvedTopic,
+      description: resolvedDescription,
+      tags: Array.from(tagSet),
+      questions,
+      adaptive: adaptiveMode
+        ? {
+            mode: adaptiveMode,
+            trigger,
+          }
+        : null,
+    });
   } catch (err: any) {
     if (err?.message === "GEMINI_API_KEY is not configured") {
       return res.status(500).json({ msg: err.message });

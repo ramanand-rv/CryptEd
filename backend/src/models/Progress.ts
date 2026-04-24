@@ -1,10 +1,22 @@
 import mongoose, { Schema, Document } from "mongoose";
 
+export type QuizAttemptType =
+  | "standard"
+  | "adaptive-unknown"
+  | "adaptive-remedial"
+  | "adaptive-follow-up";
+
 export interface IProgress extends Document {
   userId: mongoose.Types.ObjectId;
   courseId: mongoose.Types.ObjectId;
   completedChapters: number[]; // indices of completed chapters/blocks
-  quizScores: Array<{ blockIndex: number; score: number; passed: boolean }>;
+  quizScores: Array<{
+    blockIndex: number;
+    score: number;
+    passed: boolean;
+    attemptType: QuizAttemptType;
+    attemptedAt: Date;
+  }>;
   completedAt?: Date;
   lastAccessedAt: Date;
 }
@@ -19,6 +31,20 @@ const ProgressSchema: Schema = new Schema(
         blockIndex: Number,
         score: Number,
         passed: Boolean,
+        attemptType: {
+          type: String,
+          enum: [
+            "standard",
+            "adaptive-unknown",
+            "adaptive-remedial",
+            "adaptive-follow-up",
+          ],
+          default: "standard",
+        },
+        attemptedAt: {
+          type: Date,
+          default: Date.now,
+        },
       },
     ],
     completedAt: { type: Date },

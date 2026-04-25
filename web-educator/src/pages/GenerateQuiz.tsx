@@ -36,6 +36,7 @@ const GenerateQuiz: React.FC = () => {
   const lessonId = queryParams.get("lessonId") || "";
 
   const [targetLessonId, setTargetLessonId] = useState(lessonId);
+  const [courseContent, setCourseContent] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [topic, setTopic] = useState(queryParams.get("topic") || "");
   const [description, setDescription] = useState(
@@ -57,6 +58,12 @@ const GenerateQuiz: React.FC = () => {
         });
         setTopic((prev) => prev || res.data?.title || "");
         setDescription((prev) => prev || res.data?.description || "");
+        const blocks = Array.isArray(res.data?.content)
+          ? res.data.content
+          : Array.isArray(res.data?.content?.content)
+            ? res.data.content.content
+            : [];
+        setCourseContent(blocks);
       } catch (err) {
         console.error(err);
         setError("Unable to load course details.");
@@ -112,6 +119,14 @@ const GenerateQuiz: React.FC = () => {
     [tags],
   );
 
+  const targetChapterIndex = useMemo(() => {
+    if (!targetLessonId) return -1;
+    return courseContent.findIndex(
+      (block: any) =>
+        block?.type === "lesson" && block?.attrs?.lessonId === targetLessonId,
+    );
+  }, [courseContent, targetLessonId]);
+
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -123,19 +138,42 @@ const GenerateQuiz: React.FC = () => {
 
     setGenerating(true);
     try {
+      const suggestPayload: Record<string, unknown> = {
+        topic: topic.trim(),
+        description: description.trim(),
+        tags: tagList,
+        numQuestions,
+      };
+
+      if (targetChapterIndex >= 0) {
+        suggestPayload.chapterIndex = targetChapterIndex;
+      }
+
       const res = await api.post(
-        "/courses/generate-quiz",
-        {
-          topic: topic.trim(),
-          description: description.trim(),
-          tags: tagList,
-          numQuestions,
-        },
+        `/courses/${id}/ai-suggest`,
+        suggestPayload,
         { headers: { "x-auth-token": token } },
       );
 
       const received = Array.isArray(res.data.questions) ? res.data.questions : [];
       setQuestions(received);
+      if (typeof res.data?.topic === "string" && res.data.topic.trim()) {
+        setTopic(res.data.topic.trim());
+      }
+      if (
+        typeof res.data?.description === "string" &&
+        res.data.description.trim()
+      ) {
+        setDescription(res.data.description.trim());
+      }
+      if (Array.isArray(res.data?.tags)) {
+        setTags(
+          res.data.tags
+            .map((tag: unknown) => String(tag).trim())
+            .filter((tag: string) => tag.length > 0)
+            .join(", "),
+        );
+      }
     } catch (err: any) {
       console.error(err);
       const message =

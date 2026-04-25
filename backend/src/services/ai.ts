@@ -1,6 +1,54 @@
 import "dotenv/config";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+export const PASSING_SCORE = 70;
+export const FOLLOW_UP_THRESHOLD = 90;
+
+export type AdaptiveMode = "remedial" | "follow-up";
+
+export interface QuizSuggestionTrigger {
+  latestScore: number;
+  averageScore: number;
+  attempts: number;
+}
+
+export interface TailoredQuizRequest {
+  topic: string;
+  description: string;
+  tags?: string[];
+  numQuestions?: number;
+  mode?: AdaptiveMode | null;
+  trigger?: QuizSuggestionTrigger | null;
+  focusPrompts?: string[];
+}
+
+export const clampScore = (score: number) => Math.min(Math.max(score, 0), 100);
+
+export const getAdaptiveMode = (
+  latestScore: number,
+  averageScore: number,
+): AdaptiveMode | null => {
+  if (latestScore < PASSING_SCORE) return "remedial";
+  if (latestScore < FOLLOW_UP_THRESHOLD || averageScore < FOLLOW_UP_THRESHOLD) {
+    return "follow-up";
+  }
+  return null;
+};
+
+const normalizeTags = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((tag) => String(tag).trim())
+    .filter((tag) => tag.length > 0);
+};
+
+const sanitizeQuestionCount = (value: unknown, fallback = 5) => {
+  const parsed =
+    typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, 1), 20);
+};
+
 const sanitizeQuestions = (raw: any[], limit: number): any[] => {
   const cleaned = raw
     .filter((item) => item && typeof item.question === "string")
@@ -94,4 +142,57 @@ Only return the JSON array (no markdown, no extra text).`;
     console.error("Gemini error:", err);
     throw new Error("Failed to generate quiz questions");
   }
+}
+
+export async function generateTailoredQuizQuestions({
+  topic,
+  description,
+  tags = [],
+  numQuestions = 5,
+  mode = null,
+  trigger = null,
+  focusPrompts = [],
+}: TailoredQuizRequest): Promise<any[]> {
+  const normalizedTopic = String(topic || "").trim();
+  const normalizedDescription = String(description || "").trim();
+  const normalizedTags = normalizeTags(tags);
+
+  if (!normalizedTopic || !normalizedDescription) {
+    throw new Error("Topic and description are required");
+  }
+
+  const targetCount = sanitizeQuestionCount(numQuestions, 5);
+  const modeLine = mode
+    ? `Generate a ${mode} practice set that targets weak areas while keeping wording clear and concise.`
+    : "Generate balanced questions with varied wording and practical framing.";
+
+  const triggerSummary = trigger
+    ? `Learner performance summary:
+- Latest score: ${clampScore(trigger.latestScore).toFixed(0)}%
+- Average score: ${clampScore(trigger.averageScore).toFixed(0)}%
+- Attempts: ${Math.max(0, Math.floor(trigger.attempts))}`
+    : "";
+
+  const focusLine =
+    focusPrompts.length > 0
+      ? `Focus especially on these concepts from previous attempts: ${focusPrompts
+          .slice(0, 3)
+          .join(" | ")}.`
+      : "Cover foundational concepts and one applied scenario.";
+
+  const tailoredDescription = [
+    normalizedDescription,
+    modeLine,
+    triggerSummary,
+    focusLine,
+  ]
+    .filter((line) => line.trim().length > 0)
+    .join("\n\n");
+
+  return generateQuizQuestions(
+    normalizedTopic,
+    tailoredDescription,
+    normalizedTags,
+    targetCount,
+  );
 }

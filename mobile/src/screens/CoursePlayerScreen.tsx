@@ -51,6 +51,19 @@ interface AdaptiveQuizPayload {
   questions: AdaptiveQuizQuestion[];
 }
 
+interface AiSuggestResponse {
+  chapterIndex: number | null;
+  questions: AdaptiveQuizQuestion[];
+  adaptive: {
+    mode: "remedial" | "follow-up";
+    trigger?: {
+      latestScore?: number;
+      averageScore?: number;
+      attempts?: number;
+    } | null;
+  } | null;
+}
+
 const getLessonDisplayTitle = (block: any, chapterIndex: number) => {
   const title = block?.attrs?.title;
   if (typeof title === "string" && title.trim()) {
@@ -159,6 +172,57 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     }));
   };
 
+  const fetchAdaptiveSuggestion = async (
+    chapterIndex: number,
+  ): Promise<AdaptiveQuizPayload | null> => {
+    if (!token) return null;
+
+    try {
+      const res = await axios.post<AiSuggestResponse>(
+        `${API_BASE_URL}/courses/${courseId}/ai-suggest`,
+        { chapterIndex },
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+
+      const suggestion = res.data;
+      const adaptiveMode = suggestion?.adaptive?.mode;
+      const questions = Array.isArray(suggestion?.questions)
+        ? suggestion.questions
+        : [];
+
+      if (
+        (adaptiveMode !== "remedial" && adaptiveMode !== "follow-up") ||
+        questions.length === 0
+      ) {
+        return null;
+      }
+
+      const trigger = suggestion?.adaptive?.trigger || {};
+      return {
+        mode: adaptiveMode,
+        chapterIndex:
+          typeof suggestion?.chapterIndex === "number"
+            ? suggestion.chapterIndex
+            : chapterIndex,
+        trigger: {
+          latestScore: Number(trigger.latestScore || 0),
+          averageScore: Number(trigger.averageScore || 0),
+          attempts: Number(trigger.attempts || 0),
+        },
+        questions,
+      };
+    } catch (err: any) {
+      const statusCode = err?.response?.status;
+      if (statusCode && statusCode < 500) {
+        return null;
+      }
+      console.error("Failed to fetch adaptive suggestion", err);
+      return null;
+    }
+  };
+
   const handleChapterComplete = async () => {
     try {
       await axios.post(
@@ -200,15 +264,10 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       );
 
       syncProgressFromResponse(res.data);
+      const adaptiveCandidate = await fetchAdaptiveSuggestion(currentChapter);
 
-      const adaptiveCandidate = res.data?.adaptiveQuiz;
-      const hasAdaptiveQuestions =
-        adaptiveCandidate &&
-        Array.isArray(adaptiveCandidate.questions) &&
-        adaptiveCandidate.questions.length > 0;
-
-      if (hasAdaptiveQuestions) {
-        setAdaptiveQuiz(adaptiveCandidate as AdaptiveQuizPayload);
+      if (adaptiveCandidate) {
+        setAdaptiveQuiz(adaptiveCandidate);
         const modeLabel =
           adaptiveCandidate.mode === "remedial" ? "Remedial" : "Follow-up";
         Alert.alert(
@@ -237,6 +296,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
           chapterIndex: currentChapter,
           quizScore: score,
           isAdaptiveAttempt: true,
+          adaptiveMode,
         },
         {
           headers: { "x-auth-token": token },

@@ -3,6 +3,8 @@ import auth from "../middleware/auth.js";
 import Course, { ICourse } from "../models/Course.js";
 import User from "../models/User.js";
 import Progress from "../models/Progress.js";
+import Assignment from "../models/Assignment.js";
+import AssignmentSubmission from "../models/AssignmentSubmission.js";
 import {
   generateQuizQuestions,
   generateTailoredQuizQuestions,
@@ -11,6 +13,7 @@ import {
   type AdaptiveMode,
   type QuizSuggestionTrigger,
 } from "../services/ai.js";
+import { ensureCourseCompletionAndCertificates } from "../services/completion.js";
 import Purchase from "../models/Purchase.js";
 import LessonDiscussion from "../models/LessonDiscussion.js";
 import Comment from "../models/Comment.js";
@@ -26,6 +29,7 @@ interface LessonBlock {
   type?: string;
   attrs?: {
     lessonId?: string;
+    title?: string;
   };
 }
 
@@ -186,6 +190,28 @@ const getLessonIds = (course: ICourse) => {
     .filter((lessonId) => lessonId.length > 0);
 };
 
+const getLessonBlockIndex = (course: ICourse, lessonId: string) => {
+  const normalizedLessonId = lessonId.trim();
+  if (!normalizedLessonId) return -1;
+
+  const blocks = Array.isArray(course.content)
+    ? (course.content as LessonBlock[])
+    : [];
+
+  const lessonIndex = blocks.findIndex(
+    (block) =>
+      block?.type === "lesson" &&
+      block?.attrs?.lessonId?.trim() === normalizedLessonId,
+  );
+  if (lessonIndex >= 0) return lessonIndex;
+
+  const match = /^chapter-(\d+)$/.exec(normalizedLessonId);
+  if (!match) return -1;
+  const chapterIndex = Number.parseInt(match[1], 10);
+  if (!Number.isInteger(chapterIndex) || chapterIndex < 0) return -1;
+  return chapterIndex < (course.content?.length || 0) ? chapterIndex : -1;
+};
+
 const isValidLessonForCourse = (course: ICourse, lessonId: string) => {
   const normalizedLessonId = lessonId.trim();
   if (!normalizedLessonId) return false;
@@ -291,6 +317,71 @@ const canAccessCourseComments = async (req: AuthRequest, course: ICourse) => {
       allowed: false,
       status: 403,
       msg: "Purchase required to join comments.",
+    };
+  }
+
+  return { allowed: true, status: 200 };
+};
+
+const canManageCourse = (req: AuthRequest, course: ICourse) => {
+  const userId = req.user?.userId;
+  const role = req.user?.role;
+
+  if (!userId || !role) {
+    return { allowed: false, status: 401, msg: "Unauthorized" };
+  }
+
+  if (role !== "educator") {
+    return { allowed: false, status: 403, msg: "Not authorized" };
+  }
+
+  if (String(course.educatorId) !== userId) {
+    return { allowed: false, status: 403, msg: "Not authorized" };
+  }
+
+  return { allowed: true, status: 200 };
+};
+
+const canAccessCourseAssignments = async (req: AuthRequest, course: ICourse) => {
+  const userId = req.user?.userId;
+  const role = req.user?.role;
+
+  if (!userId || !role) {
+    return { allowed: false, status: 401, msg: "Unauthorized" };
+  }
+
+  if (role === "educator") {
+    const manageAccess = canManageCourse(req, course);
+    if (!manageAccess.allowed) return manageAccess;
+    return { allowed: true, status: 200 };
+  }
+
+  if (role !== "learner") {
+    return { allowed: false, status: 403, msg: "Not authorized" };
+  }
+
+  if (course.status !== "published") {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Assignments are available after publishing.",
+    };
+  }
+
+  if ((course.price || 0) <= 0) {
+    return { allowed: true, status: 200 };
+  }
+
+  const hasPurchased = await Purchase.exists({
+    userId,
+    courseId: course._id,
+  });
+
+  if (!hasPurchased) {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Purchase required to access assignments.",
     };
   }
 
@@ -550,6 +641,82 @@ const buildCommentTree = async (comments: any[]): Promise<CommentResponse[]> => 
   sortTree(roots);
   return roots;
 };
+
+const normalizeFileTypes = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item).trim())
+      .filter((item) => item.length > 0)
+      .slice(0, 20);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+      .slice(0, 20);
+  }
+
+  return [];
+};
+
+const toIntegerInRange = (
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+) => {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  const rounded = Math.round(parsed);
+  return Math.min(Math.max(rounded, min), max);
+};
+
+const toAssignmentResponse = (assignment: any) => ({
+  _id: String(assignment._id),
+  courseId: String(assignment.courseId),
+  lessonId: assignment.lessonId,
+  blockIndex: assignment.blockIndex,
+  title: assignment.title,
+  instructions: assignment.instructions,
+  acceptedFileTypes: Array.isArray(assignment.acceptedFileTypes)
+    ? assignment.acceptedFileTypes
+    : [],
+  maxScore: assignment.maxScore,
+  passingScore: assignment.passingScore,
+  isRequired: Boolean(assignment.isRequired),
+  isActive: Boolean(assignment.isActive),
+  createdAt: assignment.createdAt,
+  updatedAt: assignment.updatedAt,
+});
+
+const toAssignmentSubmissionResponse = (submission: any) => ({
+  _id: String(submission._id),
+  assignmentId: String(submission.assignmentId),
+  courseId: String(submission.courseId),
+  lessonId: submission.lessonId,
+  blockIndex: submission.blockIndex,
+  learnerId: String(submission.learnerId),
+  fileName: submission.fileName,
+  fileUrl: submission.fileUrl,
+  notes: submission.notes || "",
+  status: submission.status,
+  score:
+    typeof submission.score === "number" && Number.isFinite(submission.score)
+      ? submission.score
+      : null,
+  feedback: submission.feedback || "",
+  passed: typeof submission.passed === "boolean" ? submission.passed : null,
+  gradedBy: submission.gradedBy ? String(submission.gradedBy) : null,
+  gradedAt: submission.gradedAt || null,
+  submittedAt: submission.submittedAt,
+  createdAt: submission.createdAt,
+  updatedAt: submission.updatedAt,
+});
 
 // Create a course (educator only)
 router.post("/", auth, async (req: AuthRequest, res: Response) => {
@@ -894,6 +1061,481 @@ router.post("/:id/ai-suggest", auth, async (req: AuthRequest, res: Response) => 
     res.status(500).json({ error: err.message });
   }
 });
+
+// Create or update assignment for a lesson (educator owner only)
+router.post("/:id/assignments", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    const manageAccess = canManageCourse(req, course);
+    if (!manageAccess.allowed) {
+      return res.status(manageAccess.status).json({ msg: manageAccess.msg });
+    }
+
+    const lessonId = String(req.body?.lessonId || "").trim();
+    const title = String(req.body?.title || "").trim();
+    const instructions = String(req.body?.instructions || "").trim();
+    const isRequired = req.body?.isRequired !== false;
+    const isActive = req.body?.isActive !== false;
+
+    if (!lessonId) {
+      return res.status(400).json({ msg: "lessonId is required" });
+    }
+    if (!title) {
+      return res.status(400).json({ msg: "Assignment title is required" });
+    }
+    if (!instructions) {
+      return res.status(400).json({ msg: "Assignment instructions are required" });
+    }
+    if (!isValidLessonForCourse(course, lessonId)) {
+      return res.status(404).json({ msg: "Lesson not found" });
+    }
+
+    const blockIndex = getLessonBlockIndex(course, lessonId);
+    if (blockIndex < 0) {
+      return res.status(404).json({ msg: "Lesson block index not found" });
+    }
+
+    const maxScore = toIntegerInRange(req.body?.maxScore, 100, 1, 1000);
+    const passingScore = toIntegerInRange(
+      req.body?.passingScore,
+      70,
+      0,
+      maxScore,
+    );
+    const acceptedFileTypes = normalizeFileTypes(req.body?.acceptedFileTypes);
+
+    const assignment = await Assignment.findOneAndUpdate(
+      {
+        courseId: course._id,
+        lessonId,
+      },
+      {
+        $set: {
+          courseId: course._id,
+          lessonId,
+          blockIndex,
+          title,
+          instructions,
+          acceptedFileTypes,
+          maxScore,
+          passingScore,
+          isRequired,
+          isActive,
+          createdBy: req.user?.userId,
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+
+    res.status(201).json({ assignment: toAssignmentResponse(assignment) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get assignments for course or lesson
+router.get("/:id/assignments", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ msg: "Unauthorized" });
+
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    const access = await canAccessCourseAssignments(req, course);
+    if (!access.allowed) {
+      return res.status(access.status).json({ msg: access.msg });
+    }
+
+    const lessonId = String(req.query.lessonId || "").trim();
+    const blockIndexRaw = String(req.query.blockIndex || "").trim();
+
+    const query: Record<string, any> = { courseId: course._id };
+    if (lessonId) {
+      query.lessonId = lessonId;
+    } else if (blockIndexRaw) {
+      const blockIndex = Number.parseInt(blockIndexRaw, 10);
+      if (!Number.isInteger(blockIndex) || blockIndex < 0) {
+        return res.status(400).json({ msg: "Invalid blockIndex" });
+      }
+      query.blockIndex = blockIndex;
+    }
+
+    const assignments = await Assignment.find(query)
+      .sort({ blockIndex: 1, createdAt: 1 })
+      .lean();
+
+    if (req.user?.role === "learner") {
+      const assignmentIds = assignments.map((assignment) => assignment._id);
+      const submissions = assignmentIds.length
+        ? await AssignmentSubmission.find({
+            assignmentId: { $in: assignmentIds },
+            learnerId: userId,
+          }).lean()
+        : [];
+      const submissionMap = new Map(
+        submissions.map((submission) => [
+          String(submission.assignmentId),
+          submission,
+        ]),
+      );
+
+      return res.json({
+        assignments: assignments.map((assignment) => ({
+          ...toAssignmentResponse(assignment),
+          submission: submissionMap.has(String(assignment._id))
+            ? toAssignmentSubmissionResponse(
+                submissionMap.get(String(assignment._id)),
+              )
+            : null,
+        })),
+      });
+    }
+
+    const assignmentIds = assignments.map((assignment) => assignment._id);
+    const submissionCounts = assignmentIds.length
+      ? await AssignmentSubmission.aggregate([
+          {
+            $match: {
+              assignmentId: { $in: assignmentIds },
+            },
+          },
+          {
+            $group: {
+              _id: "$assignmentId",
+              total: { $sum: 1 },
+              graded: {
+                $sum: { $cond: [{ $eq: ["$status", "graded"] }, 1, 0] },
+              },
+              passed: {
+                $sum: { $cond: [{ $eq: ["$passed", true] }, 1, 0] },
+              },
+            },
+          },
+        ])
+      : [];
+    const countsMap = new Map(
+      submissionCounts.map((entry) => [String(entry._id), entry]),
+    );
+
+    res.json({
+      assignments: assignments.map((assignment) => {
+        const counts = countsMap.get(String(assignment._id));
+        return {
+          ...toAssignmentResponse(assignment),
+          submissions: {
+            total: counts?.total || 0,
+            graded: counts?.graded || 0,
+            passed: counts?.passed || 0,
+          },
+        };
+      }),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Learner submits assignment file reference
+router.post(
+  "/:id/assignments/:assignmentId/submissions",
+  auth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (req.user?.role !== "learner") {
+        return res
+          .status(403)
+          .json({ msg: "Only learners can submit assignments" });
+      }
+
+      const userId = req.user?.userId;
+      if (!userId) return res.status(401).json({ msg: "Unauthorized" });
+
+      const course = await Course.findById(req.params.id);
+      if (!course) return res.status(404).json({ msg: "Course not found" });
+
+      const access = await canAccessCourseAssignments(req, course);
+      if (!access.allowed) {
+        return res.status(access.status).json({ msg: access.msg });
+      }
+
+      const assignment = await Assignment.findOne({
+        _id: req.params.assignmentId,
+        courseId: course._id,
+      });
+      if (!assignment || !assignment.isActive) {
+        return res.status(404).json({ msg: "Assignment not found" });
+      }
+
+      const fileName = String(req.body?.fileName || "").trim();
+      const fileUrl = String(req.body?.fileUrl || "").trim();
+      const notes = String(req.body?.notes || "").trim();
+
+      if (!fileName) {
+        return res.status(400).json({ msg: "fileName is required" });
+      }
+      if (!fileUrl) {
+        return res.status(400).json({ msg: "fileUrl is required" });
+      }
+      if (fileName.length > 240) {
+        return res.status(400).json({ msg: "fileName is too long" });
+      }
+      if (fileUrl.length > 2000) {
+        return res.status(400).json({ msg: "fileUrl is too long" });
+      }
+      if (notes.length > 2000) {
+        return res.status(400).json({ msg: "notes is too long" });
+      }
+
+      const existing = await AssignmentSubmission.findOne({
+        assignmentId: assignment._id,
+        learnerId: userId,
+      });
+
+      if (existing?.passed === true) {
+        return res.status(400).json({
+          msg: "Assignment already passed. Contact educator for resubmission.",
+        });
+      }
+
+      const submission = await AssignmentSubmission.findOneAndUpdate(
+        {
+          assignmentId: assignment._id,
+          learnerId: userId,
+        },
+        {
+          $set: {
+            assignmentId: assignment._id,
+            courseId: assignment.courseId,
+            lessonId: assignment.lessonId,
+            blockIndex: assignment.blockIndex,
+            learnerId: userId,
+            fileName,
+            fileUrl,
+            notes,
+            status: "submitted",
+            feedback: "",
+            submittedAt: new Date(),
+          },
+          $unset: {
+            score: "",
+            passed: "",
+            gradedBy: "",
+            gradedAt: "",
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      );
+
+      res.status(201).json({
+        assignment: toAssignmentResponse(assignment),
+        submission: toAssignmentSubmissionResponse(submission),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Educator views assignment submissions
+router.get(
+  "/:id/assignments/:assignmentId/submissions",
+  auth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const course = await Course.findById(req.params.id);
+      if (!course) return res.status(404).json({ msg: "Course not found" });
+
+      const manageAccess = canManageCourse(req, course);
+      if (!manageAccess.allowed) {
+        return res.status(manageAccess.status).json({ msg: manageAccess.msg });
+      }
+
+      const assignment = await Assignment.findOne({
+        _id: req.params.assignmentId,
+        courseId: course._id,
+      }).lean();
+      if (!assignment) return res.status(404).json({ msg: "Assignment not found" });
+
+      const submissions = await AssignmentSubmission.find({
+        assignmentId: assignment._id,
+      })
+        .sort({ updatedAt: -1 })
+        .lean();
+
+      const learnerIds = Array.from(
+        new Set(submissions.map((submission) => String(submission.learnerId))),
+      );
+      const learners = await User.find({ _id: { $in: learnerIds } })
+        .select("name email walletAddress")
+        .lean();
+      const learnerMap = new Map(
+        learners.map((learner) => [String(learner._id), learner]),
+      );
+
+      res.json({
+        assignment: toAssignmentResponse(assignment),
+        submissions: submissions.map((submission) => {
+          const learner = learnerMap.get(String(submission.learnerId));
+          return {
+            ...toAssignmentSubmissionResponse(submission),
+            learner: {
+              id: String(submission.learnerId),
+              name: learner?.name || "Learner",
+              email: learner?.email || "",
+              walletAddress: learner?.walletAddress || "",
+            },
+          };
+        }),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Learner views own submission for assignment
+router.get(
+  "/:id/assignments/:assignmentId/submissions/me",
+  auth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      if (req.user?.role !== "learner") {
+        return res.status(403).json({ msg: "Only learners can view submission" });
+      }
+
+      const userId = req.user?.userId;
+      if (!userId) return res.status(401).json({ msg: "Unauthorized" });
+
+      const course = await Course.findById(req.params.id);
+      if (!course) return res.status(404).json({ msg: "Course not found" });
+
+      const access = await canAccessCourseAssignments(req, course);
+      if (!access.allowed) {
+        return res.status(access.status).json({ msg: access.msg });
+      }
+
+      const assignment = await Assignment.findOne({
+        _id: req.params.assignmentId,
+        courseId: course._id,
+      }).lean();
+      if (!assignment) return res.status(404).json({ msg: "Assignment not found" });
+
+      const submission = await AssignmentSubmission.findOne({
+        assignmentId: assignment._id,
+        learnerId: userId,
+      }).lean();
+
+      res.json({
+        assignment: toAssignmentResponse(assignment),
+        submission: submission ? toAssignmentSubmissionResponse(submission) : null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
+
+// Educator grades a learner assignment submission
+router.post(
+  "/:id/assignments/:assignmentId/submissions/:submissionId/grade",
+  auth,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const course = await Course.findById(req.params.id);
+      if (!course) return res.status(404).json({ msg: "Course not found" });
+
+      const manageAccess = canManageCourse(req, course);
+      if (!manageAccess.allowed) {
+        return res.status(manageAccess.status).json({ msg: manageAccess.msg });
+      }
+
+      const assignment = await Assignment.findOne({
+        _id: req.params.assignmentId,
+        courseId: course._id,
+      });
+      if (!assignment) return res.status(404).json({ msg: "Assignment not found" });
+
+      const submission = await AssignmentSubmission.findOne({
+        _id: req.params.submissionId,
+        assignmentId: assignment._id,
+      });
+      if (!submission) return res.status(404).json({ msg: "Submission not found" });
+
+      const scoreCandidate =
+        req.body?.score === undefined || req.body?.score === null
+          ? null
+          : Number.parseFloat(String(req.body.score));
+      const score =
+        scoreCandidate === null || !Number.isFinite(scoreCandidate)
+          ? null
+          : Math.min(Math.max(scoreCandidate, 0), assignment.maxScore);
+      const feedback = String(req.body?.feedback || "").trim();
+
+      const passed =
+        typeof req.body?.passed === "boolean"
+          ? req.body.passed
+          : score !== null
+            ? score >= assignment.passingScore
+            : false;
+
+      submission.status = "graded";
+      submission.score = score === null ? undefined : Number(score.toFixed(2));
+      submission.feedback = feedback;
+      submission.passed = passed;
+      submission.gradedBy = req.user?.userId as any;
+      submission.gradedAt = new Date();
+      await submission.save();
+
+      let progressSnapshot: any = null;
+      if (passed) {
+        const learnerId = String(submission.learnerId);
+        let progress = await Progress.findOne({
+          userId: learnerId,
+          courseId: course._id,
+        });
+
+        if (!progress) {
+          progress = new Progress({
+            userId: learnerId,
+            courseId: course._id,
+            completedChapters: [],
+            quizScores: [],
+          });
+        }
+
+        if (!progress.completedChapters.includes(assignment.blockIndex)) {
+          progress.completedChapters.push(assignment.blockIndex);
+        }
+
+        await ensureCourseCompletionAndCertificates(
+          String(course._id),
+          learnerId,
+          progress,
+        );
+        await progress.save();
+        progressSnapshot = {
+          completedChapters: progress.completedChapters,
+          completedAt: progress.completedAt || null,
+        };
+      }
+
+      res.json({
+        assignment: toAssignmentResponse(assignment),
+        submission: toAssignmentSubmissionResponse(submission),
+        progress: progressSnapshot,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+);
 
 // Get lesson discussions
 router.get(

@@ -64,6 +64,33 @@ interface AiSuggestResponse {
   } | null;
 }
 
+interface AssignmentSubmission {
+  _id: string;
+  status: "submitted" | "graded";
+  fileName: string;
+  fileUrl: string;
+  notes: string;
+  score: number | null;
+  feedback: string;
+  passed: boolean | null;
+  gradedAt: string | null;
+  submittedAt: string;
+}
+
+interface CourseAssignment {
+  _id: string;
+  lessonId: string;
+  blockIndex: number;
+  title: string;
+  instructions: string;
+  acceptedFileTypes: string[];
+  maxScore: number;
+  passingScore: number;
+  isRequired: boolean;
+  isActive: boolean;
+  submission?: AssignmentSubmission | null;
+}
+
 const getLessonDisplayTitle = (block: any, chapterIndex: number) => {
   const title = block?.attrs?.title;
   if (typeof title === "string" && title.trim()) {
@@ -104,6 +131,14 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const [postingReplyParentId, setPostingReplyParentId] = useState<string | null>(
     null,
   );
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignment, setAssignment] = useState<CourseAssignment | null>(null);
+  const [assignmentSubmission, setAssignmentSubmission] =
+    useState<AssignmentSubmission | null>(null);
+  const [assignmentFileName, setAssignmentFileName] = useState("");
+  const [assignmentFileUrl, setAssignmentFileUrl] = useState("");
+  const [assignmentNotes, setAssignmentNotes] = useState("");
+  const [submittingAssignment, setSubmittingAssignment] = useState(false);
   const { token } = useAuth();
 
   useEffect(() => {
@@ -370,6 +405,88 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     }
   };
 
+  const fetchAssignmentForCurrentChapter = async () => {
+    if (!course || !token) return;
+    const block = course.content?.[currentChapter];
+    const lessonId = String(block?.attrs?.lessonId || "").trim();
+
+    if (block?.type !== "lesson" || !lessonId) {
+      setAssignment(null);
+      setAssignmentSubmission(null);
+      return;
+    }
+
+    setAssignmentLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/courses/${courseId}/assignments`, {
+        headers: { "x-auth-token": token },
+        params: { lessonId },
+      });
+      const assignments = Array.isArray(res.data?.assignments)
+        ? res.data.assignments
+        : [];
+      const nextAssignment = (assignments[0] || null) as CourseAssignment | null;
+      setAssignment(nextAssignment);
+      const submission =
+        nextAssignment?.submission && typeof nextAssignment.submission === "object"
+          ? (nextAssignment.submission as AssignmentSubmission)
+          : null;
+      setAssignmentSubmission(submission);
+      if (submission) {
+        setAssignmentFileName(submission.fileName || "");
+        setAssignmentFileUrl(submission.fileUrl || "");
+        setAssignmentNotes(submission.notes || "");
+      } else {
+        setAssignmentFileName("");
+        setAssignmentFileUrl("");
+        setAssignmentNotes("");
+      }
+    } catch (err: any) {
+      console.error("Failed to load assignment", err);
+      setAssignment(null);
+      setAssignmentSubmission(null);
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+  const handleSubmitAssignment = async () => {
+    if (!assignment || !token) return;
+    const fileName = assignmentFileName.trim();
+    const fileUrl = assignmentFileUrl.trim();
+    const notes = assignmentNotes.trim();
+
+    if (!fileName || !fileUrl) {
+      Alert.alert("Submission required", "Please provide file name and file URL.");
+      return;
+    }
+
+    setSubmittingAssignment(true);
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/courses/${courseId}/assignments/${assignment._id}/submissions`,
+        { fileName, fileUrl, notes },
+        { headers: { "x-auth-token": token } },
+      );
+      const submission = res.data?.submission as AssignmentSubmission | undefined;
+      if (submission?._id) {
+        setAssignmentSubmission(submission);
+      }
+      Alert.alert(
+        "Assignment submitted",
+        "Your submission is now pending educator review.",
+      );
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to submit assignment.";
+      Alert.alert("Unable to submit", message);
+    } finally {
+      setSubmittingAssignment(false);
+    }
+  };
+
   const handlePostComment = async (parentId?: string) => {
     if (!course || !token) return;
     const text = parentId
@@ -434,6 +551,10 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     fetchComments();
   }, [course, currentChapter, token]);
 
+  useEffect(() => {
+    fetchAssignmentForCurrentChapter();
+  }, [course, currentChapter, token]);
+
   if (loading)
     return (
       <View style={styles.container}>
@@ -450,6 +571,8 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const block = course.content[currentChapter];
   const lessonTitle = getLessonDisplayTitle(block, currentChapter);
   const canComment = Boolean(token);
+  const hasAssignment = Boolean(assignment?._id && assignment?.isActive !== false);
+  const assignmentPassed = assignmentSubmission?.passed === true;
   const isAdaptiveQuizActive =
     block?.type === "quiz" &&
     adaptiveQuiz?.chapterIndex === currentChapter &&
@@ -555,7 +678,106 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         <>
           <ContentRenderer blocks={[block]} />
           <View style={styles.buttonContainer}>
-            <Button title="Mark as Completed" onPress={handleChapterComplete} />
+            {hasAssignment ? (
+              <>
+                <View style={styles.assignmentCard}>
+                  <Text style={styles.assignmentTitle}>
+                    {assignment?.title || "Lesson Assignment"}
+                  </Text>
+                  <Text style={styles.assignmentInstructions}>
+                    {assignment?.instructions || ""}
+                  </Text>
+                  {Array.isArray(assignment?.acceptedFileTypes) &&
+                  assignment?.acceptedFileTypes.length > 0 ? (
+                    <Text style={styles.assignmentMeta}>
+                      Accepted: {assignment.acceptedFileTypes.join(", ")}
+                    </Text>
+                  ) : null}
+                  <Text style={styles.assignmentMeta}>
+                    Pass threshold: {assignment?.passingScore ?? 70}/
+                    {assignment?.maxScore ?? 100}
+                  </Text>
+
+                  {assignmentLoading ? (
+                    <ActivityIndicator size="small" color="#0f766e" />
+                  ) : null}
+
+                  {assignmentSubmission ? (
+                    <View style={styles.assignmentStatus}>
+                      <Text style={styles.assignmentStatusTitle}>
+                        Status:{" "}
+                        {assignmentSubmission.status === "graded"
+                          ? assignmentSubmission.passed
+                            ? "Passed"
+                            : "Graded - needs revision"
+                          : "Submitted - awaiting grade"}
+                      </Text>
+                      {typeof assignmentSubmission.score === "number" ? (
+                        <Text style={styles.assignmentStatusText}>
+                          Score: {assignmentSubmission.score}
+                        </Text>
+                      ) : null}
+                      {assignmentSubmission.feedback ? (
+                        <Text style={styles.assignmentStatusText}>
+                          Feedback: {assignmentSubmission.feedback}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
+
+                  {!assignmentPassed && (
+                    <View>
+                      <TextInput
+                        value={assignmentFileName}
+                        onChangeText={setAssignmentFileName}
+                        placeholder="File name (e.g. portfolio.pdf)"
+                        style={styles.assignmentInput}
+                      />
+                      <TextInput
+                        value={assignmentFileUrl}
+                        onChangeText={setAssignmentFileUrl}
+                        placeholder="File URL (Drive/GitHub/etc.)"
+                        autoCapitalize="none"
+                        style={styles.assignmentInput}
+                      />
+                      <TextInput
+                        value={assignmentNotes}
+                        onChangeText={setAssignmentNotes}
+                        placeholder="Notes for educator (optional)"
+                        multiline
+                        style={[styles.assignmentInput, styles.assignmentNotes]}
+                      />
+                      <TouchableOpacity
+                        onPress={handleSubmitAssignment}
+                        disabled={submittingAssignment}
+                        style={[
+                          styles.askButton,
+                          submittingAssignment ? styles.askButtonDisabled : null,
+                        ]}
+                      >
+                        <Text style={styles.askButtonText}>
+                          {submittingAssignment
+                            ? "Submitting..."
+                            : assignmentSubmission
+                              ? "Resubmit assignment"
+                              : "Submit assignment"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+
+                {assignmentPassed ? (
+                  <Button title="Continue" onPress={moveToNextChapterOrComplete} />
+                ) : (
+                  <Text style={styles.emptyText}>
+                    Complete and pass this assignment to unlock the next chapter.
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Button title="Mark as Completed" onPress={handleChapterComplete} />
+            )}
           </View>
         </>
       )}
@@ -627,6 +849,61 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   chapterIndicator: { fontSize: 16, color: "#666", marginBottom: 16 },
   buttonContainer: { marginVertical: 20, alignItems: "center" },
+  assignmentCard: {
+    width: "100%",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#d1fae5",
+    backgroundColor: "#f0fdfa",
+    padding: 12,
+    marginBottom: 12,
+  },
+  assignmentTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#134e4a",
+  },
+  assignmentInstructions: {
+    marginTop: 6,
+    fontSize: 13,
+    color: "#0f172a",
+  },
+  assignmentMeta: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#0f766e",
+  },
+  assignmentStatus: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "#ecfeff",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+  },
+  assignmentStatusTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#115e59",
+  },
+  assignmentStatusText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#0f766e",
+  },
+  assignmentInput: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+  },
+  assignmentNotes: {
+    minHeight: 64,
+    textAlignVertical: "top",
+  },
   adaptiveBanner: {
     marginBottom: 14,
     padding: 12,

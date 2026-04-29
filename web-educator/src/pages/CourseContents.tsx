@@ -103,6 +103,40 @@ interface CommentNode {
   replies: CommentNode[];
 }
 
+interface AssignmentPayload {
+  _id: string;
+  lessonId: string;
+  blockIndex: number;
+  title: string;
+  instructions: string;
+  acceptedFileTypes: string[];
+  maxScore: number;
+  passingScore: number;
+  isRequired: boolean;
+  isActive: boolean;
+}
+
+interface AssignmentSubmissionPayload {
+  _id: string;
+  assignmentId: string;
+  learnerId: string;
+  fileName: string;
+  fileUrl: string;
+  notes: string;
+  status: "submitted" | "graded";
+  score: number | null;
+  feedback: string;
+  passed: boolean | null;
+  gradedAt: string | null;
+  submittedAt: string;
+  learner: {
+    id: string;
+    name: string;
+    email: string;
+    walletAddress: string;
+  };
+}
+
 const addReplyToTree = (
   tree: CommentNode[],
   parentId: string,
@@ -164,6 +198,25 @@ const CourseContents: React.FC = () => {
     null,
   );
   const [postingReplyFor, setPostingReplyFor] = useState<string | null>(null);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assignment, setAssignment] = useState<AssignmentPayload | null>(null);
+  const [assignmentSubmissions, setAssignmentSubmissions] = useState<
+    AssignmentSubmissionPayload[]
+  >([]);
+  const [assignmentTitle, setAssignmentTitle] = useState("");
+  const [assignmentInstructions, setAssignmentInstructions] = useState("");
+  const [assignmentFileTypes, setAssignmentFileTypes] = useState("");
+  const [assignmentMaxScore, setAssignmentMaxScore] = useState(100);
+  const [assignmentPassingScore, setAssignmentPassingScore] = useState(70);
+  const [assignmentRequired, setAssignmentRequired] = useState(true);
+  const [gradingSubmissionId, setGradingSubmissionId] = useState<string | null>(
+    null,
+  );
+  const [gradeDrafts, setGradeDrafts] = useState<
+    Record<string, { score: string; feedback: string; passed: boolean }>
+  >({});
   const [hydrated, setHydrated] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -363,6 +416,24 @@ const CourseContents: React.FC = () => {
     }
     setSelectedLessonId(lessons[0].id);
   }, [lessons, selectedLessonId]);
+
+  const hydrateAssignmentForm = (payload: AssignmentPayload | null) => {
+    if (!payload) {
+      setAssignmentTitle("");
+      setAssignmentInstructions("");
+      setAssignmentFileTypes("");
+      setAssignmentMaxScore(100);
+      setAssignmentPassingScore(70);
+      setAssignmentRequired(true);
+      return;
+    }
+    setAssignmentTitle(payload.title || "");
+    setAssignmentInstructions(payload.instructions || "");
+    setAssignmentFileTypes((payload.acceptedFileTypes || []).join(", "));
+    setAssignmentMaxScore(payload.maxScore || 100);
+    setAssignmentPassingScore(payload.passingScore || 70);
+    setAssignmentRequired(payload.isRequired !== false);
+  };
 
   useEffect(() => {
     if (!id || lessons.length === 0) return;
@@ -570,6 +641,158 @@ const CourseContents: React.FC = () => {
     }
   };
 
+  const fetchAssignmentForLesson = async () => {
+    if (!id || !token || !activeLesson?.id) return;
+    setAssignmentLoading(true);
+    setAssignmentError(null);
+    try {
+      const res = await api.get(`/courses/${id}/assignments`, {
+        headers: { "x-auth-token": token },
+        params: { lessonId: activeLesson.id },
+      });
+      const assignments = Array.isArray(res.data?.assignments)
+        ? res.data.assignments
+        : [];
+      const activeAssignment = (assignments[0] || null) as AssignmentPayload | null;
+      setAssignment(activeAssignment);
+      hydrateAssignmentForm(activeAssignment);
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Unable to load assignment.";
+      setAssignmentError(message);
+      setAssignment(null);
+      hydrateAssignmentForm(null);
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+  const fetchAssignmentSubmissions = async (assignmentId: string) => {
+    if (!id || !token || !assignmentId) return;
+    try {
+      const res = await api.get(
+        `/courses/${id}/assignments/${assignmentId}/submissions`,
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+      const submissions = Array.isArray(res.data?.submissions)
+        ? (res.data.submissions as AssignmentSubmissionPayload[])
+        : [];
+      setAssignmentSubmissions(submissions);
+      setGradeDrafts((prev) => {
+        const next = { ...prev };
+        submissions.forEach((submission) => {
+          if (!next[submission._id]) {
+            next[submission._id] = {
+              score:
+                typeof submission.score === "number"
+                  ? String(submission.score)
+                  : "",
+              feedback: submission.feedback || "",
+              passed: Boolean(submission.passed),
+            };
+          }
+        });
+        return next;
+      });
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Unable to load assignment submissions.";
+      setAssignmentError(message);
+      setAssignmentSubmissions([]);
+    }
+  };
+
+  const handleSaveAssignment = async () => {
+    if (!id || !token || !activeLesson?.id) return;
+    if (!assignmentTitle.trim() || !assignmentInstructions.trim()) {
+      setAssignmentError("Assignment title and instructions are required.");
+      return;
+    }
+    setAssignmentSaving(true);
+    setAssignmentError(null);
+    try {
+      const res = await api.post(
+        `/courses/${id}/assignments`,
+        {
+          lessonId: activeLesson.id,
+          title: assignmentTitle.trim(),
+          instructions: assignmentInstructions.trim(),
+          acceptedFileTypes: assignmentFileTypes
+            .split(",")
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0),
+          maxScore: assignmentMaxScore,
+          passingScore: assignmentPassingScore,
+          isRequired: assignmentRequired,
+          isActive: true,
+        },
+        { headers: { "x-auth-token": token } },
+      );
+      const saved = res.data?.assignment as AssignmentPayload | undefined;
+      if (saved?._id) {
+        setAssignment(saved);
+        hydrateAssignmentForm(saved);
+        await fetchAssignmentSubmissions(saved._id);
+      }
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Unable to save assignment.";
+      setAssignmentError(message);
+    } finally {
+      setAssignmentSaving(false);
+    }
+  };
+
+  const handleGradeSubmission = async (submissionId: string) => {
+    if (!id || !token || !assignment?._id) return;
+    const draft = gradeDrafts[submissionId];
+    if (!draft) return;
+    setGradingSubmissionId(submissionId);
+    setAssignmentError(null);
+    try {
+      const payload: Record<string, unknown> = {
+        feedback: draft.feedback.trim(),
+        passed: draft.passed,
+      };
+      const scoreValue = draft.score.trim();
+      if (scoreValue.length > 0) {
+        const parsed = Number.parseFloat(scoreValue);
+        if (Number.isFinite(parsed)) payload.score = parsed;
+      }
+      const res = await api.post(
+        `/courses/${id}/assignments/${assignment._id}/submissions/${submissionId}/grade`,
+        payload,
+        { headers: { "x-auth-token": token } },
+      );
+      const updated = res.data?.submission as AssignmentSubmissionPayload | undefined;
+      if (updated?._id) {
+        setAssignmentSubmissions((prev) =>
+          prev.map((submission) =>
+            submission._id === updated._id
+              ? { ...submission, ...updated }
+              : submission,
+          ),
+        );
+      }
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Unable to grade submission.";
+      setAssignmentError(message);
+    } finally {
+      setGradingSubmissionId(null);
+    }
+  };
+
   const fetchComments = async () => {
     if (!id || !token || activeBlockIndex < 0) return;
     setCommentsLoading(true);
@@ -651,6 +874,19 @@ const CourseContents: React.FC = () => {
   useEffect(() => {
     fetchComments();
   }, [id, token, activeBlockIndex]);
+
+  useEffect(() => {
+    fetchAssignmentForLesson();
+  }, [id, token, activeLesson?.id]);
+
+  useEffect(() => {
+    if (assignment?._id) {
+      fetchAssignmentSubmissions(assignment._id);
+    } else {
+      setAssignmentSubmissions([]);
+      setGradeDrafts({});
+    }
+  }, [assignment?._id, id, token]);
 
   const renderComment = (comment: CommentNode, depth = 0): React.ReactNode => {
     const isReplying = activeReplyParentId === comment._id;
@@ -953,15 +1189,298 @@ const CourseContents: React.FC = () => {
                   lesson={activeLesson}
                   onUpdate={(updates) => updateLesson(activeLesson.id, updates)}
                 />
-                  <ContentLessonEditor
-                    lesson={activeLesson}
-                    onDelete={() => removeLesson(activeLesson.id)}
-                    onChangeContent={(next) =>
-                      updateLesson(activeLesson.id, { content: next })
-                    }
-                    onAddQuiz={() => openQuizBuilder(activeLesson)}
-                    onEditQuiz={(quiz) => openQuizBuilder(activeLesson, quiz)}
-                  />
+                <ContentLessonEditor
+                  lesson={activeLesson}
+                  onDelete={() => removeLesson(activeLesson.id)}
+                  onChangeContent={(next) =>
+                    updateLesson(activeLesson.id, { content: next })
+                  }
+                  onAddQuiz={() => openQuizBuilder(activeLesson)}
+                  onEditQuiz={(quiz) => openQuizBuilder(activeLesson, quiz)}
+                />
+                <section className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft space-y-4">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                        Assignment
+                      </p>
+                      <h3 className="text-lg font-semibold text-slate-900 mt-1">
+                        Manual file grading
+                      </h3>
+                      <p className="text-sm text-slate-500 mt-1">
+                        Collect file links and grade submissions to unlock
+                        completion.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveAssignment}
+                      disabled={assignmentSaving}
+                      className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-60"
+                    >
+                      {assignmentSaving
+                        ? "Saving..."
+                        : assignment?._id
+                          ? "Update assignment"
+                          : "Create assignment"}
+                    </button>
+                  </div>
+
+                  {assignmentError && (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                      {assignmentError}
+                    </div>
+                  )}
+
+                  {assignmentLoading ? (
+                    <p className="text-sm text-slate-500">Loading assignment...</p>
+                  ) : (
+                    <>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Title
+                          </label>
+                          <input
+                            value={assignmentTitle}
+                            onChange={(event) =>
+                              setAssignmentTitle(event.target.value)
+                            }
+                            className="w-full mt-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="Week 1 Project"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Accepted file types
+                          </label>
+                          <input
+                            value={assignmentFileTypes}
+                            onChange={(event) =>
+                              setAssignmentFileTypes(event.target.value)
+                            }
+                            className="w-full mt-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            placeholder="pdf, pptx, github, figma"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700">
+                          Instructions
+                        </label>
+                        <textarea
+                          value={assignmentInstructions}
+                          onChange={(event) =>
+                            setAssignmentInstructions(event.target.value)
+                          }
+                          rows={4}
+                          className="w-full mt-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                          placeholder="Describe deliverables and submission expectations."
+                        />
+                      </div>
+
+                      <div className="grid md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Max score
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={1000}
+                            value={assignmentMaxScore}
+                            onChange={(event) =>
+                              setAssignmentMaxScore(Number(event.target.value))
+                            }
+                            className="w-full mt-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700">
+                            Passing score
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={assignmentMaxScore || 100}
+                            value={assignmentPassingScore}
+                            onChange={(event) =>
+                              setAssignmentPassingScore(Number(event.target.value))
+                            }
+                            className="w-full mt-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 text-sm text-slate-700 mt-9">
+                          <input
+                            type="checkbox"
+                            checked={assignmentRequired}
+                            onChange={(event) =>
+                              setAssignmentRequired(event.target.checked)
+                            }
+                          />
+                          Required
+                        </label>
+                      </div>
+                    </>
+                  )}
+
+                  {assignment?._id && (
+                    <div className="border-t border-slate-200 pt-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-slate-900">
+                          Submissions
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => fetchAssignmentSubmissions(assignment._id)}
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-slate-300 transition"
+                        >
+                          Refresh
+                        </button>
+                      </div>
+
+                      {assignmentSubmissions.length === 0 ? (
+                        <p className="text-sm text-slate-500">No submissions yet.</p>
+                      ) : (
+                        assignmentSubmissions.map((submission) => {
+                          const draft = gradeDrafts[submission._id] || {
+                            score:
+                              typeof submission.score === "number"
+                                ? String(submission.score)
+                                : "",
+                            feedback: submission.feedback || "",
+                            passed: Boolean(submission.passed),
+                          };
+
+                          return (
+                            <article
+                              key={submission._id}
+                              className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">
+                                    {submission.learner?.name || "Learner"}
+                                  </p>
+                                  <p className="text-xs text-slate-500">
+                                    {submission.learner?.email || "No email"} -{" "}
+                                    Submitted{" "}
+                                    {new Date(
+                                      submission.submittedAt,
+                                    ).toLocaleString()}
+                                  </p>
+                                </div>
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                    submission.status === "graded"
+                                      ? submission.passed
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : "bg-rose-100 text-rose-700"
+                                      : "bg-amber-100 text-amber-700"
+                                  }`}
+                                >
+                                  {submission.status === "graded"
+                                    ? submission.passed
+                                      ? "Passed"
+                                      : "Needs revision"
+                                    : "Pending"}
+                                </span>
+                              </div>
+
+                              <p className="text-sm text-slate-600">
+                                <a
+                                  href={submission.fileUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-emerald-700 underline break-all"
+                                >
+                                  {submission.fileName}
+                                </a>
+                              </p>
+                              {submission.notes ? (
+                                <p className="text-sm text-slate-500 whitespace-pre-wrap">
+                                  {submission.notes}
+                                </p>
+                              ) : null}
+
+                              <div className="grid md:grid-cols-3 gap-3 items-end">
+                                <div>
+                                  <label className="block text-xs font-medium text-slate-600">
+                                    Score
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={assignment.maxScore}
+                                    value={draft.score}
+                                    onChange={(event) =>
+                                      setGradeDrafts((prev) => ({
+                                        ...prev,
+                                        [submission._id]: {
+                                          ...draft,
+                                          score: event.target.value,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none"
+                                  />
+                                </div>
+                                <label className="flex items-center gap-2 text-sm text-slate-700">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.passed}
+                                    onChange={(event) =>
+                                      setGradeDrafts((prev) => ({
+                                        ...prev,
+                                        [submission._id]: {
+                                          ...draft,
+                                          passed: event.target.checked,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                  Mark as passed
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => handleGradeSubmission(submission._id)}
+                                  disabled={gradingSubmissionId === submission._id}
+                                  className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                >
+                                  {gradingSubmissionId === submission._id
+                                    ? "Saving..."
+                                    : "Save grade"}
+                                </button>
+                              </div>
+
+                              <div>
+                                <label className="block text-xs font-medium text-slate-600">
+                                  Feedback
+                                </label>
+                                <textarea
+                                  rows={3}
+                                  value={draft.feedback}
+                                  onChange={(event) =>
+                                    setGradeDrafts((prev) => ({
+                                      ...prev,
+                                      [submission._id]: {
+                                        ...draft,
+                                        feedback: event.target.value,
+                                      },
+                                    }))
+                                  }
+                                  className="w-full mt-1 rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none"
+                                  placeholder="Actionable feedback for learner."
+                                />
+                              </div>
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </section>
                 <section className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                     Comments

@@ -24,6 +24,83 @@ interface CourseMetricsResponse {
     reviewsCount: number;
     avgRating: number;
   };
+  analytics?: {
+    cohortFunnels: {
+      overall: {
+        views: number;
+        enrolled: number;
+        started: number;
+        active: number;
+        completed: number;
+        startRate: number;
+        completionRate: number;
+      };
+      cohorts: Array<{
+        cohort: string;
+        label: string;
+        enrolled: number;
+        started: number;
+        completed: number;
+        startRate: number;
+        completionRate: number;
+      }>;
+    };
+    quizPassRates: {
+      overall: {
+        attempts: number;
+        passedAttempts: number;
+        passRate: number;
+        learnersAttempted: number;
+        learnersPassed: number;
+        learnerPassRate: number;
+        averageScore: number;
+      };
+      byChapter: Array<{
+        blockIndex: number;
+        title: string;
+        attempts: number;
+        passedAttempts: number;
+        passRate: number;
+        learnersAttempted: number;
+        learnersPassed: number;
+        learnerPassRate: number;
+        averageScore: number;
+      }>;
+    };
+    dropOffHeatmap: {
+      totalStages: number;
+      stages: Array<{
+        blockIndex: number;
+        title: string;
+        reachedCount: number;
+        completedCount: number;
+        nextStageCount: number;
+        dropOffCount: number;
+        dropOffRate: number;
+      }>;
+    };
+    revenueBreakdown: {
+      totalRevenue: number;
+      averageOrderValue: number;
+      monthly: Array<{
+        month: string;
+        revenue: number;
+        sales: number;
+      }>;
+      tiers: Array<{
+        tier: string;
+        sales: number;
+        revenue: number;
+      }>;
+      topCustomers: Array<{
+        userId: string;
+        name: string;
+        email?: string;
+        totalSpent: number;
+        purchases: number;
+      }>;
+    };
+  };
   reviews: Array<{
     name?: string;
     rating: number;
@@ -66,6 +143,8 @@ const shortenWallet = (address?: string) =>
   address && address.length > 12
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : address || "Wallet unavailable";
+
+const toPercent = (value: number) => `${Number(value || 0).toFixed(1)}%`;
 
 const TrendLine: React.FC<{ values: number[]; color: string }> = ({
   values,
@@ -128,18 +207,26 @@ const CourseDashboard: React.FC = () => {
   }, [token, id]);
 
   const trendValues = useMemo(() => {
+    const monthly = data?.analytics?.revenueBreakdown?.monthly || [];
+    if (monthly.length > 0) {
+      return monthly.map((point) => Math.max(0, Math.round(point.revenue)));
+    }
     const seed = data?.metrics.sales ? data.metrics.sales * 4 : 6;
     return Array.from({ length: 8 }).map((_, index) =>
       Math.max(1, Math.round(seed + index * (seed / 4))),
     );
-  }, [data?.metrics.sales]);
+  }, [data?.analytics?.revenueBreakdown?.monthly, data?.metrics.sales]);
 
   const viewTrend = useMemo(() => {
+    const cohorts = data?.analytics?.cohortFunnels?.cohorts || [];
+    if (cohorts.length > 0) {
+      return cohorts.map((cohort) => Math.max(0, cohort.enrolled));
+    }
     const seed = data?.metrics.views ? data.metrics.views / 6 : 8;
     return Array.from({ length: 8 }).map((_, index) =>
       Math.max(1, Math.round(seed + index * (seed / 3))),
     );
-  }, [data?.metrics.views]);
+  }, [data?.analytics?.cohortFunnels?.cohorts, data?.metrics.views]);
 
   if (loading) {
     return (
@@ -164,6 +251,8 @@ const CourseDashboard: React.FC = () => {
       </div>
     );
   }
+
+  const analytics = data.analytics;
 
   return (
     <div className="min-h-screen">
@@ -350,6 +439,242 @@ const CourseDashboard: React.FC = () => {
             </div>
           </div>
         </section>
+
+        {analytics && (
+          <>
+            <section className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase text-slate-400">Cohorts</p>
+                  <h2 className="text-lg font-semibold text-slate-900 mt-1">
+                    Funnel performance
+                  </h2>
+                </div>
+                <span className="text-sm text-slate-500">
+                  Completion {toPercent(analytics.cohortFunnels.overall.completionRate)}
+                </span>
+              </div>
+
+              <div className="mt-4 grid md:grid-cols-5 gap-3">
+                {[
+                  {
+                    label: "Views",
+                    value: analytics.cohortFunnels.overall.views,
+                  },
+                  {
+                    label: "Enrolled",
+                    value: analytics.cohortFunnels.overall.enrolled,
+                  },
+                  {
+                    label: "Started",
+                    value: analytics.cohortFunnels.overall.started,
+                  },
+                  {
+                    label: "Active (14d)",
+                    value: analytics.cohortFunnels.overall.active,
+                  },
+                  {
+                    label: "Completed",
+                    value: analytics.cohortFunnels.overall.completed,
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-2xl border border-slate-100 bg-white p-3"
+                  >
+                    <p className="text-xs uppercase text-slate-400">{item.label}</p>
+                    <p className="text-xl font-semibold text-slate-900 mt-2">
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 space-y-3">
+                {analytics.cohortFunnels.cohorts.length === 0 ? (
+                  <p className="text-sm text-slate-500">
+                    No cohort data available yet.
+                  </p>
+                ) : (
+                  analytics.cohortFunnels.cohorts.map((cohort) => (
+                    <div
+                      key={cohort.cohort}
+                      className="rounded-2xl border border-slate-100 bg-white p-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {cohort.label}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Start {toPercent(cohort.startRate)} • Complete{" "}
+                          {toPercent(cohort.completionRate)}
+                        </p>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">
+                        {cohort.enrolled} enrolled • {cohort.started} started •{" "}
+                        {cohort.completed} completed
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="grid lg:grid-cols-2 gap-6">
+              <div className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+                <p className="text-xs uppercase text-slate-400">Quiz Pass Rates</p>
+                <h2 className="text-lg font-semibold text-slate-900 mt-1">
+                  Assessment quality signals
+                </h2>
+                <div className="mt-4 space-y-2 text-sm text-slate-600">
+                  <p>
+                    Attempt pass rate:{" "}
+                    <span className="font-semibold text-slate-900">
+                      {toPercent(analytics.quizPassRates.overall.passRate)}
+                    </span>
+                  </p>
+                  <p>
+                    Learner pass rate:{" "}
+                    <span className="font-semibold text-slate-900">
+                      {toPercent(analytics.quizPassRates.overall.learnerPassRate)}
+                    </span>
+                  </p>
+                  <p>
+                    Average score:{" "}
+                    <span className="font-semibold text-slate-900">
+                      {analytics.quizPassRates.overall.averageScore.toFixed(1)}%
+                    </span>
+                  </p>
+                  <p>
+                    Attempts:{" "}
+                    <span className="font-semibold text-slate-900">
+                      {analytics.quizPassRates.overall.attempts}
+                    </span>
+                  </p>
+                </div>
+                <div className="mt-4 space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {analytics.quizPassRates.byChapter.map((chapter) => (
+                    <div
+                      key={`quiz-${chapter.blockIndex}`}
+                      className="rounded-xl border border-slate-100 bg-white px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm text-slate-700 truncate">{chapter.title}</p>
+                        <p className="text-xs font-semibold text-emerald-700">
+                          {toPercent(chapter.passRate)}
+                        </p>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {chapter.passedAttempts}/{chapter.attempts} attempts passed
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+                <p className="text-xs uppercase text-slate-400">Drop-off Heatmap</p>
+                <h2 className="text-lg font-semibold text-slate-900 mt-1">
+                  Chapter-level attrition
+                </h2>
+                <div className="mt-4 space-y-2 max-h-96 overflow-y-auto pr-1">
+                  {analytics.dropOffHeatmap.stages.map((stage) => {
+                    const intensity = Math.min(100, Math.max(0, stage.dropOffRate));
+                    return (
+                      <div
+                        key={`drop-${stage.blockIndex}`}
+                        className="rounded-xl border border-slate-100 bg-white px-3 py-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm text-slate-700 truncate">{stage.title}</p>
+                          <p className="text-xs font-semibold text-rose-700">
+                            {toPercent(stage.dropOffRate)}
+                          </p>
+                        </div>
+                        <div className="mt-2 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
+                          <div
+                            className="h-2 bg-rose-400"
+                            style={{ width: `${intensity}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-slate-500 mt-2">
+                          {stage.reachedCount} reached • {stage.nextStageCount} moved on •{" "}
+                          {stage.dropOffCount} dropped
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase text-slate-400">Revenue Breakdown</p>
+                  <h2 className="text-lg font-semibold text-slate-900 mt-1">
+                    Monetization detail
+                  </h2>
+                </div>
+                <span className="text-sm text-slate-500">
+                  AOV {(analytics.revenueBreakdown.averageOrderValue / 1e9).toFixed(3)} SOL
+                </span>
+              </div>
+
+              <div className="mt-4 grid md:grid-cols-3 gap-4">
+                <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                  <p className="text-xs uppercase text-slate-400">Monthly Revenue</p>
+                  <div className="mt-3 space-y-2">
+                    {analytics.revenueBreakdown.monthly.map((month) => (
+                      <div
+                        key={month.month}
+                        className="flex items-center justify-between text-sm text-slate-600"
+                      >
+                        <span>{month.month}</span>
+                        <span className="font-semibold text-slate-900">
+                          {(month.revenue / 1e9).toFixed(3)} SOL
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                  <p className="text-xs uppercase text-slate-400">Price Tiers</p>
+                  <div className="mt-3 space-y-2">
+                    {analytics.revenueBreakdown.tiers.map((tier) => (
+                      <div key={tier.tier} className="text-sm text-slate-600">
+                        <p className="font-medium text-slate-800">{tier.tier}</p>
+                        <p>
+                          {tier.sales} sales • {(tier.revenue / 1e9).toFixed(3)} SOL
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-100 bg-white p-4">
+                  <p className="text-xs uppercase text-slate-400">Top Customers</p>
+                  <div className="mt-3 space-y-2">
+                    {analytics.revenueBreakdown.topCustomers.length === 0 ? (
+                      <p className="text-sm text-slate-500">No purchases yet.</p>
+                    ) : (
+                      analytics.revenueBreakdown.topCustomers.map((customer) => (
+                        <div key={customer.userId} className="text-sm text-slate-600">
+                          <p className="font-medium text-slate-800">{customer.name}</p>
+                          <p>
+                            {(customer.totalSpent / 1e9).toFixed(3)} SOL •{" "}
+                            {customer.purchases} purchases
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
 
         <section className="rounded-3xl border border-white/60 bg-white/70 p-6 shadow-soft">
           <div className="flex items-center justify-between">

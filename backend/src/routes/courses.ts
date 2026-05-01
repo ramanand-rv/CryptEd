@@ -1817,7 +1817,13 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
       return res.status(403).json({ msg: "Not authorized" });
     }
 
-    const purchases = await Purchase.find({ courseId: course._id });
+    const purchases = await Purchase.find({ courseId: course._id }).sort({
+      purchasedAt: 1,
+    });
+    const progressDocs = await Progress.find({ courseId: course._id }).sort({
+      lastAccessedAt: -1,
+    });
+
     const revenue = purchases.reduce((sum, p) => sum + p.amount, 0);
     const sales = purchases.length;
 
@@ -1825,6 +1831,299 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
     const avgRating = ratings.length
       ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length
       : 0;
+
+    const lessonBlocks = Array.isArray(course.content)
+      ? course.content.filter((block: any) => block?.type === "lesson")
+      : [];
+    const totalStages = lessonBlocks.length > 0 ? lessonBlocks.length : course.content.length;
+    const stageTitles = Array.from({ length: totalStages }).map((_, index) => {
+      const lesson = lessonBlocks[index];
+      const title = lesson?.attrs?.title;
+      return typeof title === "string" && title.trim()
+        ? title.trim()
+        : `Chapter ${index + 1}`;
+    });
+
+    const purchaseUserIds = purchases.map((purchase) => String(purchase.userId));
+    const progressUserIds = progressDocs.map((progress) => String(progress.userId));
+    const enrolledUserIds = Array.from(
+      new Set([...purchaseUserIds, ...progressUserIds]),
+    );
+    const enrolledCount = enrolledUserIds.length;
+
+    const hasStartedLearning = (progress: any) =>
+      (Array.isArray(progress.completedChapters) &&
+        progress.completedChapters.length > 0) ||
+      (Array.isArray(progress.quizScores) && progress.quizScores.length > 0) ||
+      Boolean(progress.completedAt);
+
+    const now = new Date();
+    const activeWindowMs = 14 * 24 * 60 * 60 * 1000;
+    const startedUserIds = new Set<string>();
+    const activeUserIds = new Set<string>();
+    const completedUserIds = new Set<string>();
+
+    progressDocs.forEach((progress) => {
+      const userId = String(progress.userId);
+      if (hasStartedLearning(progress)) {
+        startedUserIds.add(userId);
+      }
+      const lastAccessed = new Date(progress.lastAccessedAt || now);
+      if (now.getTime() - lastAccessed.getTime() <= activeWindowMs) {
+        activeUserIds.add(userId);
+      }
+      if (progress.completedAt) {
+        completedUserIds.add(userId);
+      }
+    });
+
+    const startedCount = startedUserIds.size;
+    const activeCount = activeUserIds.size;
+    const completedCount = completedUserIds.size;
+    const startRate = enrolledCount > 0 ? (startedCount / enrolledCount) * 100 : 0;
+    const completionRate =
+      enrolledCount > 0 ? (completedCount / enrolledCount) * 100 : 0;
+
+    // Cohort funnels grouped by purchase month, with free-course fallback to progress month.
+    const cohortMap = new Map<string, Set<string>>();
+    if (purchases.length > 0) {
+      purchases.forEach((purchase) => {
+        const date = new Date(purchase.purchasedAt);
+        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        if (!cohortMap.has(key)) cohortMap.set(key, new Set());
+        cohortMap.get(key)!.add(String(purchase.userId));
+      });
+    } else {
+      progressDocs.forEach((progress) => {
+        const date = new Date(progress.lastAccessedAt || now);
+        const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        if (!cohortMap.has(key)) cohortMap.set(key, new Set());
+        cohortMap.get(key)!.add(String(progress.userId));
+      });
+    }
+
+    const cohortFunnels = Array.from(cohortMap.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-6)
+      .map(([cohort, users]) => {
+        const enrolled = users.size;
+        let started = 0;
+        let completed = 0;
+        users.forEach((userId) => {
+          if (startedUserIds.has(userId)) started += 1;
+          if (completedUserIds.has(userId)) completed += 1;
+        });
+        const [year, month] = cohort.split("-");
+        const label = new Date(Number(year), Number(month) - 1, 1).toLocaleString(
+          "default",
+          { month: "short", year: "numeric" },
+        );
+        return {
+          cohort,
+          label,
+          enrolled,
+          started,
+          completed,
+          startRate: enrolled > 0 ? Number(((started / enrolled) * 100).toFixed(2)) : 0,
+          completionRate:
+            enrolled > 0 ? Number(((completed / enrolled) * 100).toFixed(2)) : 0,
+        };
+      });
+
+    // Quiz pass rates overall and by chapter.
+    const quizAttempts: Array<{
+      userId: string;
+      blockIndex: number;
+      score: number;
+      passed: boolean;
+    }> = [];
+    progressDocs.forEach((progress) => {
+      const userId = String(progress.userId);
+      (progress.quizScores || []).forEach((quizEntry: any) => {
+        const blockIndex = Number.parseInt(String(quizEntry?.blockIndex), 10);
+        const score = Number(quizEntry?.score);
+        if (!Number.isInteger(blockIndex) || blockIndex < 0 || !Number.isFinite(score)) {
+          return;
+        }
+        const passed = Boolean(quizEntry?.passed);
+        quizAttempts.push({ userId, blockIndex, score, passed });
+      });
+    });
+
+    const overallQuizAttempts = quizAttempts.length;
+    const overallQuizPassed = quizAttempts.filter((attempt) => attempt.passed).length;
+    const overallScoreAverage =
+      overallQuizAttempts > 0
+        ? quizAttempts.reduce((sum, attempt) => sum + attempt.score, 0) /
+          overallQuizAttempts
+        : 0;
+    const quizLearnersAttempted = new Set(quizAttempts.map((attempt) => attempt.userId));
+    const quizLearnersPassed = new Set(
+      quizAttempts.filter((attempt) => attempt.passed).map((attempt) => attempt.userId),
+    );
+
+    const chapterQuizStats = Array.from({ length: totalStages }).map((_, index) => {
+      const attempts = quizAttempts.filter((attempt) => attempt.blockIndex === index);
+      const passedAttempts = attempts.filter((attempt) => attempt.passed).length;
+      const learnersAttempted = new Set(attempts.map((attempt) => attempt.userId));
+      const learnersPassed = new Set(
+        attempts.filter((attempt) => attempt.passed).map((attempt) => attempt.userId),
+      );
+      const avgScore =
+        attempts.length > 0
+          ? attempts.reduce((sum, attempt) => sum + attempt.score, 0) / attempts.length
+          : 0;
+
+      return {
+        blockIndex: index,
+        title: stageTitles[index] || `Chapter ${index + 1}`,
+        attempts: attempts.length,
+        passedAttempts,
+        passRate:
+          attempts.length > 0
+            ? Number(((passedAttempts / attempts.length) * 100).toFixed(2))
+            : 0,
+        learnersAttempted: learnersAttempted.size,
+        learnersPassed: learnersPassed.size,
+        learnerPassRate:
+          learnersAttempted.size > 0
+            ? Number(((learnersPassed.size / learnersAttempted.size) * 100).toFixed(2))
+            : 0,
+        averageScore: Number(avgScore.toFixed(2)),
+      };
+    });
+
+    // Drop-off heatmap by chapter transition.
+    const stageReachedByUser = new Map<string, Set<number>>();
+    const stageCompletedByUser = new Map<string, Set<number>>();
+    progressDocs.forEach((progress) => {
+      const userId = String(progress.userId);
+      const reachedSet = stageReachedByUser.get(userId) || new Set<number>();
+      const completedSet = stageCompletedByUser.get(userId) || new Set<number>();
+
+      (progress.completedChapters || []).forEach((chapter: number) => {
+        if (Number.isInteger(chapter) && chapter >= 0) {
+          reachedSet.add(chapter);
+          completedSet.add(chapter);
+        }
+      });
+      (progress.quizScores || []).forEach((quizEntry: any) => {
+        const blockIndex = Number.parseInt(String(quizEntry?.blockIndex), 10);
+        if (Number.isInteger(blockIndex) && blockIndex >= 0) {
+          reachedSet.add(blockIndex);
+        }
+      });
+
+      stageReachedByUser.set(userId, reachedSet);
+      stageCompletedByUser.set(userId, completedSet);
+    });
+
+    const dropOffStages = Array.from({ length: totalStages }).map((_, index) => {
+      let reachedCount = 0;
+      let completedChapterCount = 0;
+      let nextStageCount = 0;
+
+      stageReachedByUser.forEach((reachedSet, userId) => {
+        if (reachedSet.has(index)) {
+          reachedCount += 1;
+          if (index + 1 < totalStages && reachedSet.has(index + 1)) {
+            nextStageCount += 1;
+          }
+        }
+        if (stageCompletedByUser.get(userId)?.has(index)) {
+          completedChapterCount += 1;
+        }
+      });
+
+      const dropOffCount = Math.max(0, reachedCount - nextStageCount);
+      return {
+        blockIndex: index,
+        title: stageTitles[index] || `Chapter ${index + 1}`,
+        reachedCount,
+        completedCount: completedChapterCount,
+        nextStageCount,
+        dropOffCount,
+        dropOffRate:
+          reachedCount > 0
+            ? Number(((dropOffCount / reachedCount) * 100).toFixed(2))
+            : 0,
+      };
+    });
+
+    // Revenue breakdowns.
+    const monthlyTimeline = Array.from({ length: 6 }).map((_, idx) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - (5 - idx), 1);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      return {
+        key,
+        label: date.toLocaleString("default", { month: "short", year: "numeric" }),
+      };
+    });
+    const monthlyRevenueMap = new Map(
+      monthlyTimeline.map((entry) => [entry.key, { revenue: 0, sales: 0 }]),
+    );
+    purchases.forEach((purchase) => {
+      const date = new Date(purchase.purchasedAt);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const existing = monthlyRevenueMap.get(key);
+      if (!existing) return;
+      existing.revenue += Number(purchase.amount || 0);
+      existing.sales += 1;
+      monthlyRevenueMap.set(key, existing);
+    });
+    const monthlyRevenue = monthlyTimeline.map((entry) => ({
+      month: entry.label,
+      revenue: monthlyRevenueMap.get(entry.key)?.revenue || 0,
+      sales: monthlyRevenueMap.get(entry.key)?.sales || 0,
+    }));
+
+    const tierRows = [
+      { tier: "Under 0.1 SOL", min: 0, max: 0.1 * 1e9, sales: 0, revenue: 0 },
+      {
+        tier: "0.1 - 0.5 SOL",
+        min: 0.1 * 1e9,
+        max: 0.5 * 1e9,
+        sales: 0,
+        revenue: 0,
+      },
+      { tier: "0.5+ SOL", min: 0.5 * 1e9, max: Number.POSITIVE_INFINITY, sales: 0, revenue: 0 },
+    ];
+    purchases.forEach((purchase) => {
+      const amount = Number(purchase.amount || 0);
+      const tier = tierRows.find((row) => amount >= row.min && amount < row.max);
+      if (!tier) return;
+      tier.sales += 1;
+      tier.revenue += amount;
+    });
+
+    const spenderMap = new Map<string, { totalSpent: number; purchases: number }>();
+    purchases.forEach((purchase) => {
+      const userId = String(purchase.userId);
+      const current = spenderMap.get(userId) || { totalSpent: 0, purchases: 0 };
+      current.totalSpent += Number(purchase.amount || 0);
+      current.purchases += 1;
+      spenderMap.set(userId, current);
+    });
+    const spenderIds = Array.from(spenderMap.keys());
+    const spenders = spenderIds.length
+      ? await User.find({ _id: { $in: spenderIds } }).select("name email").lean()
+      : [];
+    const spenderProfileMap = new Map(
+      spenders.map((spender) => [String(spender._id), spender]),
+    );
+    const topCustomers = Array.from(spenderMap.entries())
+      .map(([userId, stats]) => {
+        const profile = spenderProfileMap.get(userId);
+        return {
+          userId,
+          name: profile?.name || "Learner",
+          email: profile?.email || "",
+          totalSpent: stats.totalSpent,
+          purchases: stats.purchases,
+        };
+      })
+      .sort((a, b) => b.totalSpent - a.totalSpent)
+      .slice(0, 8);
 
     const rewardSnapshot = await getRewardSnapshot(course);
 
@@ -1849,6 +2148,55 @@ router.get("/:id/metrics", auth, async (req: AuthRequest, res: Response) => {
         revenue,
         reviewsCount: ratings.length,
         avgRating,
+      },
+      analytics: {
+        cohortFunnels: {
+          overall: {
+            views: course.views || 0,
+            enrolled: enrolledCount,
+            started: startedCount,
+            active: activeCount,
+            completed: completedCount,
+            startRate: Number(startRate.toFixed(2)),
+            completionRate: Number(completionRate.toFixed(2)),
+          },
+          cohorts: cohortFunnels,
+        },
+        quizPassRates: {
+          overall: {
+            attempts: overallQuizAttempts,
+            passedAttempts: overallQuizPassed,
+            passRate:
+              overallQuizAttempts > 0
+                ? Number(((overallQuizPassed / overallQuizAttempts) * 100).toFixed(2))
+                : 0,
+            learnersAttempted: quizLearnersAttempted.size,
+            learnersPassed: quizLearnersPassed.size,
+            learnerPassRate:
+              quizLearnersAttempted.size > 0
+                ? Number(
+                    ((quizLearnersPassed.size / quizLearnersAttempted.size) * 100).toFixed(2),
+                  )
+                : 0,
+            averageScore: Number(overallScoreAverage.toFixed(2)),
+          },
+          byChapter: chapterQuizStats,
+        },
+        dropOffHeatmap: {
+          totalStages,
+          stages: dropOffStages,
+        },
+        revenueBreakdown: {
+          totalRevenue: revenue,
+          averageOrderValue: sales > 0 ? Number((revenue / sales).toFixed(2)) : 0,
+          monthly: monthlyRevenue,
+          tiers: tierRows.map((row) => ({
+            tier: row.tier,
+            sales: row.sales,
+            revenue: row.revenue,
+          })),
+          topCustomers,
+        },
       },
       reviews: course.reviews || [],
       recentWinners: rewardSnapshot.recentWinners,

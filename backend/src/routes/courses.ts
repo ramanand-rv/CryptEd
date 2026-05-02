@@ -10,10 +10,20 @@ import {
   generateTailoredQuizQuestions,
   getAdaptiveMode,
   clampScore,
+  generateCertificateMetadata,
   type AdaptiveMode,
   type QuizSuggestionTrigger,
 } from "../services/ai.js";
 import { ensureCourseCompletionAndCertificates } from "../services/completion.js";
+import { mintCourseCompletionNFT } from "../services/metaplex.js";
+import { distributeReward } from "../services/reward.js";
+import {
+  asCourseIdString,
+  buildExplorerAddressUrl,
+  buildVerifyUrl,
+  hasCertificateForCourse,
+  toCertificateResponse,
+} from "../services/certificates.js";
 import Purchase from "../models/Purchase.js";
 import LessonDiscussion from "../models/LessonDiscussion.js";
 import Comment from "../models/Comment.js";
@@ -148,6 +158,8 @@ const getConnectedWalletAddress = (req: AuthRequest) => {
   const raw = req.header("x-wallet-address");
   return typeof raw === "string" ? raw.trim() : "";
 };
+
+const getApiBaseUrl = (req: Request) => `${req.protocol}://${req.get("host")}`;
 
 const ensureWalletConnectedAndVerified = async (
   req: AuthRequest,
@@ -430,6 +442,52 @@ const canAccessCourseAiSuggest = async (req: AuthRequest, course: ICourse) => {
       allowed: false,
       status: 403,
       msg: "Purchase required to access AI suggestions.",
+    };
+  }
+
+  return { allowed: true, status: 200 };
+};
+
+const canCompleteCourseCertificate = async (
+  req: AuthRequest,
+  course: ICourse,
+) => {
+  const userId = req.user?.userId;
+  const role = req.user?.role;
+
+  if (!userId || !role) {
+    return { allowed: false, status: 401, msg: "Unauthorized" };
+  }
+
+  if (role !== "learner") {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Only learners can complete course certificates.",
+    };
+  }
+
+  if (course.status !== "published") {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Certificates are available after publishing.",
+    };
+  }
+
+  if ((course.price || 0) <= 0) {
+    return { allowed: true, status: 200 };
+  }
+
+  const hasPurchased = await Purchase.exists({
+    userId,
+    courseId: course._id,
+  });
+  if (!hasPurchased) {
+    return {
+      allowed: false,
+      status: 403,
+      msg: "Purchase required to claim certificate.",
     };
   }
 
@@ -1536,6 +1594,193 @@ router.post(
     }
   },
 );
+
+// Complete course and mint certificate (learner only)
+router.post("/:id/complete", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ msg: "Unauthorized" });
+
+    const course = await Course.findById(req.params.id);
+    if (!course) return res.status(404).json({ msg: "Course not found" });
+
+    const access = await canCompleteCourseCertificate(req, course);
+    if (!access.allowed) {
+      return res.status(access.status).json({ msg: access.msg });
+    }
+
+    const learner = await User.findById(userId);
+    if (!learner) return res.status(404).json({ msg: "User not found" });
+    if (!learner.walletAddress) {
+      return res
+        .status(400)
+        .json({ msg: "Connect and verify a wallet to claim certificate." });
+    }
+
+    let progress = await Progress.findOne({ userId, courseId: course._id });
+    if (!progress) {
+      progress = new Progress({
+        userId,
+        courseId: course._id,
+        completedChapters: [],
+        quizScores: [],
+      });
+    }
+
+    const totalChapters = course.content.length || 0;
+    const completedSet = new Set<number>(
+      (progress.completedChapters || []).filter(
+        (value: number) => Number.isInteger(value) && value >= 0,
+      ),
+    );
+
+    if (totalChapters > 0 && completedSet.size < totalChapters) {
+      return res.status(400).json({
+        msg: "Course is not fully completed yet.",
+        progress: {
+          completed: completedSet.size,
+          total: totalChapters,
+        },
+      });
+    }
+
+    const educator = await User.findById(course.educatorId);
+    const educatorWalletVerified = Boolean(educator?.walletVerifiedAt);
+
+    const existingCompletion = learner.completedCourses.some(
+      (entry) => entry.courseId?.toString() === asCourseIdString(course._id),
+    );
+    let justCompleted = false;
+    if (!progress.completedAt) {
+      progress.completedAt = new Date();
+      justCompleted = true;
+    }
+    if (!existingCompletion) {
+      learner.completedCourses.push({
+        courseId: course._id,
+        completedAt: progress.completedAt || new Date(),
+      });
+      justCompleted = true;
+    }
+
+    if (justCompleted && educatorWalletVerified) {
+      await distributeReward(String(course._id), userId);
+    }
+
+    const existingCertificate = hasCertificateForCourse(
+      learner.ownedNFTs as unknown[],
+      course._id,
+    );
+    if (existingCertificate) {
+      await progress.save();
+      await learner.save();
+      const certificate = (learner.ownedNFTs || []).find((entry: any) => {
+        const courseId = String(entry?.courseId || "");
+        return courseId === asCourseIdString(course._id);
+      });
+      const certificateResponse = toCertificateResponse(
+        certificate || null,
+        getApiBaseUrl(req),
+      );
+      const existingMintAddress = certificateResponse?.mintAddress || "";
+      return res.json({
+        success: true,
+        alreadyIssued: true,
+        certificate: certificateResponse,
+        certificateLink:
+          certificateResponse?.verifyUrl ||
+          (existingMintAddress
+            ? buildVerifyUrl(getApiBaseUrl(req), existingMintAddress)
+            : ""),
+      });
+    }
+
+    const useAiMetadata = req.body?.useAiMetadata === true;
+    const providedMetadataUri =
+      typeof req.body?.metadataUri === "string" ? req.body.metadataUri.trim() : "";
+    const learnerName = learner.name || "Learner";
+    const educatorName = educator?.name || "Educator";
+
+    let metadataName = `${course.title} Completion Certificate`;
+    let metadataDescription = `Awarded to ${learnerName} for successfully completing ${course.title}.`;
+    let metadataAttributes: Array<{ trait_type: string; value: string }> = [
+      { trait_type: "Course", value: course.title },
+      { trait_type: "Learner", value: learnerName },
+      { trait_type: "Issuer", value: educatorName },
+      { trait_type: "Issued At", value: new Date().toISOString() },
+    ];
+
+    if (useAiMetadata) {
+      try {
+        const generated = await generateCertificateMetadata({
+          courseTitle: course.title,
+          courseDescription: course.description,
+          learnerName,
+          educatorName,
+        });
+        metadataName = generated.name;
+        metadataDescription = generated.description;
+        metadataAttributes =
+          generated.attributes.length > 0
+            ? generated.attributes
+            : metadataAttributes;
+      } catch (err) {
+        console.error("AI certificate metadata fallback:", err);
+      }
+    }
+
+    const metadataPayload = {
+      name: metadataName,
+      description: metadataDescription,
+      symbol: "EDU",
+      attributes: metadataAttributes,
+    };
+
+    const metadataUri =
+      providedMetadataUri ||
+      course.nftMetadataUri ||
+      `data:application/json;base64,${Buffer.from(
+        JSON.stringify(metadataPayload),
+      ).toString("base64")}`;
+
+    const mintAddress = await mintCourseCompletionNFT(
+      learner.walletAddress!,
+      metadataUri,
+      course.title,
+    );
+
+    learner.ownedNFTs.push({
+      mintAddress,
+      courseId: course._id,
+      courseTitle: course.title,
+      metadataUri,
+      metadataName,
+      metadataDescription,
+      metadataAttributes,
+      mintedAt: new Date(),
+    });
+
+    await progress.save();
+    await learner.save();
+
+    const certificate = toCertificateResponse(
+      learner.ownedNFTs[learner.ownedNFTs.length - 1],
+      getApiBaseUrl(req),
+    );
+    const verifyUrl =
+      certificate?.verifyUrl ||
+      buildVerifyUrl(getApiBaseUrl(req), mintAddress);
+
+    res.status(201).json({
+      success: true,
+      certificate,
+      certificateLink: verifyUrl,
+      explorerUrl: buildExplorerAddressUrl(mintAddress),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Get lesson discussions
 router.get(

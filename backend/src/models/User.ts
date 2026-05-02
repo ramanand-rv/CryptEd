@@ -5,6 +5,12 @@ export interface IUserOwnedNFT {
   courseId?: mongoose.Types.ObjectId;
   courseTitle?: string;
   metadataUri?: string;
+  metadataName?: string;
+  metadataDescription?: string;
+  metadataAttributes?: Array<{
+    trait_type: string;
+    value: string;
+  }>;
   mintedAt?: Date;
 }
 

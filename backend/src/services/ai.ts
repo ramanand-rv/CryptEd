@@ -22,6 +22,19 @@ export interface TailoredQuizRequest {
   focusPrompts?: string[];
 }
 
+export interface CertificateMetadataRequest {
+  courseTitle: string;
+  courseDescription?: string;
+  learnerName?: string;
+  educatorName?: string;
+}
+
+export interface GeneratedCertificateMetadata {
+  name: string;
+  description: string;
+  attributes: Array<{ trait_type: string; value: string }>;
+}
+
 export const clampScore = (score: number) => Math.min(Math.max(score, 0), 100);
 
 export const getAdaptiveMode = (
@@ -195,4 +208,95 @@ export async function generateTailoredQuizQuestions({
     normalizedTags,
     targetCount,
   );
+}
+
+const sanitizeCertificateMetadata = (
+  raw: any,
+  fallbackTitle: string,
+): GeneratedCertificateMetadata => {
+  const name =
+    typeof raw?.name === "string" && raw.name.trim()
+      ? raw.name.trim()
+      : `${fallbackTitle} Completion Certificate`;
+  const description =
+    typeof raw?.description === "string" && raw.description.trim()
+      ? raw.description.trim()
+      : `Awarded for successfully completing ${fallbackTitle}.`;
+
+  const attributes = Array.isArray(raw?.attributes)
+    ? raw.attributes
+        .map((item: any) => ({
+          trait_type:
+            typeof item?.trait_type === "string" && item.trait_type.trim()
+              ? item.trait_type.trim()
+              : "",
+          value:
+            typeof item?.value === "string" && item.value.trim()
+              ? item.value.trim()
+              : "",
+        }))
+        .filter(
+          (item: { trait_type: string; value: string }) =>
+            item.trait_type.length > 0 && item.value.length > 0,
+        )
+        .slice(0, 12)
+    : [];
+
+  return { name, description, attributes };
+};
+
+export async function generateCertificateMetadata({
+  courseTitle,
+  courseDescription = "",
+  learnerName = "Learner",
+  educatorName = "Educator",
+}: CertificateMetadataRequest): Promise<GeneratedCertificateMetadata> {
+  const normalizedTitle = String(courseTitle || "").trim();
+  if (!normalizedTitle) {
+    throw new Error("courseTitle is required");
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    generationConfig: { responseMimeType: "application/json" },
+  });
+
+  const prompt = `Create certificate metadata for a course completion NFT.
+Return exactly one JSON object with fields:
+- "name" (string)
+- "description" (string, concise and celebratory)
+- "attributes" (array of objects with "trait_type" and "value", max 8)
+
+Course title: "${normalizedTitle}"
+Course description: "${String(courseDescription || "").trim()}"
+Learner name: "${String(learnerName || "").trim()}"
+Educator name: "${String(educatorName || "").trim()}"
+
+Do not include markdown. Return JSON only.`;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text().trim();
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("No valid JSON object found in response");
+      parsed = JSON.parse(jsonMatch[0]);
+    }
+
+    return sanitizeCertificateMetadata(parsed, normalizedTitle);
+  } catch (err) {
+    console.error("Certificate metadata generation error:", err);
+    throw new Error("Failed to generate certificate metadata");
+  }
 }

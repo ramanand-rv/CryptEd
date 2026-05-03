@@ -5,6 +5,12 @@ export interface OwnedNFTRecord {
   courseId?: string;
   courseTitle?: string;
   metadataUri?: string;
+  metadataName?: string;
+  metadataDescription?: string;
+  metadataAttributes?: Array<{
+    trait_type: string;
+    value: string;
+  }>;
   mintedAt?: Date;
 }
 
@@ -59,6 +65,29 @@ export const normalizeOwnedNFTEntry = (entry: unknown): OwnedNFTRecord | null =>
   const courseId = asIdString(raw.courseId);
   const courseTitle = asString(raw.courseTitle);
   const metadataUri = asString(raw.metadataUri);
+  const metadataName = asString(raw.metadataName);
+  const metadataDescription = asString(raw.metadataDescription);
+  const metadataAttributes = Array.isArray(raw.metadataAttributes)
+    ? raw.metadataAttributes
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return null;
+          }
+          const item = entry as Record<string, unknown>;
+          const trait_type = asString(item.trait_type);
+          const value = asString(item.value);
+          if (!trait_type || !value) return null;
+          return { trait_type, value };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            trait_type: string;
+            value: string;
+          } => Boolean(entry),
+        )
+    : undefined;
   const mintedAt = asDate(raw.mintedAt);
 
   return {
@@ -66,6 +95,9 @@ export const normalizeOwnedNFTEntry = (entry: unknown): OwnedNFTRecord | null =>
     courseId,
     courseTitle,
     metadataUri,
+    metadataName,
+    metadataDescription,
+    metadataAttributes,
     mintedAt,
   };
 };
@@ -121,6 +153,12 @@ export interface CertificateResponse {
   courseId?: string;
   courseTitle?: string;
   metadataUri?: string;
+  metadataName?: string;
+  metadataDescription?: string;
+  metadataAttributes?: Array<{
+    trait_type: string;
+    value: string;
+  }>;
   mintedAt?: string;
   explorerUrl: string;
   verifyUrl?: string;
@@ -138,6 +176,9 @@ export const toCertificateResponse = (
     courseId: normalized.courseId,
     courseTitle: normalized.courseTitle,
     metadataUri: normalized.metadataUri,
+    metadataName: normalized.metadataName,
+    metadataDescription: normalized.metadataDescription,
+    metadataAttributes: normalized.metadataAttributes,
     mintedAt: normalized.mintedAt?.toISOString(),
     explorerUrl: buildExplorerAddressUrl(normalized.mintAddress),
     verifyUrl: apiBaseUrl

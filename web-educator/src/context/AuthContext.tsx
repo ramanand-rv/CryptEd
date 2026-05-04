@@ -15,6 +15,25 @@ interface User {
   linkedin?: string;
   twitter?: string;
   walletVerifiedAt?: string;
+  completedCourses?: Array<{
+    courseId: string;
+    completedAt: string;
+  }>;
+  ownedNFTs?: Array<{
+    mintAddress: string;
+    courseId?: string;
+    courseTitle?: string;
+    metadataUri?: string;
+    metadataName?: string;
+    metadataDescription?: string;
+    metadataAttributes?: Array<{
+      trait_type: string;
+      value: string;
+    }>;
+    mintedAt?: string;
+    explorerUrl?: string;
+    verifyUrl?: string;
+  }>;
 }
 
 interface AuthContextType {

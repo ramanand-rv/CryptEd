@@ -17,6 +17,13 @@ const API_BASE_URL = "http://localhost:5000";
 interface NFTCertificate {
   mintAddress: string;
   courseTitle?: string;
+  metadataUri?: string;
+  metadataName?: string;
+  metadataDescription?: string;
+  metadataAttributes?: Array<{
+    trait_type: string;
+    value: string;
+  }>;
   mintedAt?: string;
   explorerUrl?: string;
   verifyUrl?: string;
@@ -42,6 +49,37 @@ const normalizeCertificate = (entry: unknown): NFTCertificate | null => {
     mintAddress,
     courseTitle:
       typeof raw.courseTitle === "string" ? raw.courseTitle : undefined,
+    metadataUri:
+      typeof raw.metadataUri === "string" ? raw.metadataUri : undefined,
+    metadataName:
+      typeof raw.metadataName === "string" ? raw.metadataName : undefined,
+    metadataDescription:
+      typeof raw.metadataDescription === "string"
+        ? raw.metadataDescription
+        : undefined,
+    metadataAttributes: Array.isArray(raw.metadataAttributes)
+      ? raw.metadataAttributes
+          .map((item) => {
+            if (!item || typeof item !== "object" || Array.isArray(item)) {
+              return null;
+            }
+            const value = item as Record<string, unknown>;
+            const trait_type =
+              typeof value.trait_type === "string" ? value.trait_type.trim() : "";
+            const attrValue =
+              typeof value.value === "string" ? value.value.trim() : "";
+            if (!trait_type || !attrValue) return null;
+            return { trait_type, value: attrValue };
+          })
+          .filter(
+            (
+              item,
+            ): item is {
+              trait_type: string;
+              value: string;
+            } => Boolean(item),
+          )
+      : [],
     mintedAt: typeof raw.mintedAt === "string" ? raw.mintedAt : undefined,
     explorerUrl:
       typeof raw.explorerUrl === "string" ? raw.explorerUrl : undefined,
@@ -60,7 +98,7 @@ const formatMintedAt = (mintedAt?: string) => {
   const date = new Date(mintedAt);
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleDateString();
-}
+};
 
 const ProfileScreen = () => {
   const { user, token } = useAuth();
@@ -127,13 +165,30 @@ const ProfileScreen = () => {
     }
   };
 
-  const renderNFT = ({ item }: { item: NFTCertificate }) => (
+const renderNFT = ({ item }: { item: NFTCertificate }) => (
     <View style={styles.nftCard}>
       <View style={styles.nftPlaceholder} />
-      <Text style={styles.nftTitle}>{item.courseTitle || "Course Completion"}</Text>
+      <Text style={styles.nftTitle}>
+        {item.metadataName || item.courseTitle || "Course Completion"}
+      </Text>
       <Text style={styles.nftText}>{shortenMint(item.mintAddress)}</Text>
+      {item.metadataDescription ? (
+        <Text style={styles.nftDescription}>{item.metadataDescription}</Text>
+      ) : null}
       {formatMintedAt(item.mintedAt) && (
         <Text style={styles.nftMeta}>Minted {formatMintedAt(item.mintedAt)}</Text>
+      )}
+      {Array.isArray(item.metadataAttributes) && item.metadataAttributes.length > 0 && (
+        <View style={styles.attributeWrap}>
+          {item.metadataAttributes.map((attribute, index) => (
+            <Text
+              key={`${item.mintAddress}-${attribute.trait_type}-${index}`}
+              style={styles.attributeChip}
+            >
+              {attribute.trait_type}: {attribute.value}
+            </Text>
+          ))}
+        </View>
       )}
       <View style={styles.actionsRow}>
         <TouchableOpacity
@@ -215,7 +270,28 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   nftText: { fontSize: 12, color: "#333" },
+  nftDescription: {
+    fontSize: 11,
+    color: "#4b5563",
+    textAlign: "center",
+    marginTop: 4,
+  },
   nftMeta: { fontSize: 11, color: "#6b7280", marginTop: 4 },
+  attributeWrap: {
+    marginTop: 8,
+    width: "100%",
+    gap: 4,
+  },
+  attributeChip: {
+    fontSize: 10,
+    color: "#065f46",
+    backgroundColor: "#ecfdf5",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    overflow: "hidden",
+    textAlign: "center",
+  },
   actionsRow: {
     marginTop: 10,
     flexDirection: "row",

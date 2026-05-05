@@ -932,7 +932,7 @@ router.get("/", async (req: Request, res: Response) => {
   try {
     const courses = await Course.find({
       $or: [{ status: "published" }, { status: { $exists: false } }],
-    }).populate("educatorId", "name email");
+    }).populate("educatorId", "name email walletAddress");
     res.json(courses);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -948,7 +948,7 @@ router.get("/educator", auth, async (req: AuthRequest, res: Response) => {
 
     const courses = await Course.find({
       educatorId: req.user.userId,
-    }).populate("educatorId", "name email");
+    }).populate("educatorId", "name email walletAddress");
     res.json(courses);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2486,7 +2486,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       req.params.id,
       { $inc: { views: 1 } },
       { new: true },
-    ).populate("educatorId", "name email");
+    ).populate("educatorId", "name email walletAddress");
     if (!course) return res.status(404).json({ msg: "Course not found" });
     const rewardSnapshot = await getRewardSnapshot(course);
     const courseObject = course.toObject();

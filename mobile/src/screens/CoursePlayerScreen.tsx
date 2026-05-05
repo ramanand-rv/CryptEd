@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,14 +9,15 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
+  Animated,
+  Easing,
 } from "react-native";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import ContentRenderer from "../components/ContentRenderer";
 import Quiz from "../components/Quiz";
 import ConfettiCannon from "react-native-confetti-cannon"; // Import confetti
-
-const API_BASE_URL = "http://localhost:5000/api";
+import { API_BASE_URL } from "../config/api";
 
 interface CommentAuthor {
   id: string;
@@ -139,6 +140,8 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const [assignmentFileUrl, setAssignmentFileUrl] = useState("");
   const [assignmentNotes, setAssignmentNotes] = useState("");
   const [submittingAssignment, setSubmittingAssignment] = useState(false);
+  const chapterFade = useRef(new Animated.Value(0)).current;
+  const chapterRise = useRef(new Animated.Value(18)).current;
   const { token } = useAuth();
 
   useEffect(() => {
@@ -555,6 +558,25 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     fetchAssignmentForCurrentChapter();
   }, [course, currentChapter, token]);
 
+  useEffect(() => {
+    chapterFade.setValue(0);
+    chapterRise.setValue(18);
+    Animated.parallel([
+      Animated.timing(chapterFade, {
+        toValue: 1,
+        duration: 340,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(chapterRise, {
+        toValue: 0,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [chapterFade, chapterRise, currentChapter, adaptiveQuiz?.mode]);
+
   if (loading)
     return (
       <View style={styles.container}>
@@ -590,7 +612,7 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         style={[styles.threadCard, depth > 0 ? styles.threadReplyDepth : null]}
       >
         <Text style={styles.threadMeta}>
-          {thread.author?.name || "User"} • {formatDateTime(thread.createdAt)}
+          {thread.author?.name || "User"} | {formatDateTime(thread.createdAt)}
         </Text>
         <Text style={styles.threadQuestion}>{thread.text}</Text>
 
@@ -644,143 +666,155 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       <Text style={styles.chapterIndicator}>
         Chapter {currentChapter + 1} of {course.content.length}
       </Text>
-      {block.type === "quiz" ? (
-        activeQuizQuestions.length > 0 ? (
-          <>
-            {isAdaptiveQuizActive && (
-              <View style={styles.adaptiveBanner}>
-                <Text style={styles.adaptiveBannerTitle}>
-                  {adaptiveQuiz?.mode === "remedial"
-                    ? "Remedial Practice"
-                    : "Follow-up Practice"}
-                </Text>
-                <Text style={styles.adaptiveBannerText}>
-                  These AI-generated questions are tailored to your quiz scores.
-                </Text>
-              </View>
-            )}
-            <Quiz
-              questions={activeQuizQuestions}
-              onComplete={
-                isAdaptiveQuizActive ? handleAdaptiveQuizComplete : handleQuizComplete
-              }
-            />
-          </>
-        ) : (
-          <View style={styles.buttonContainer}>
-            <Text style={styles.emptyText}>
-              No quiz questions available for this chapter.
-            </Text>
-            <Button title="Continue" onPress={moveToNextChapterOrComplete} />
-          </View>
-        )
-      ) : (
-        <>
-          <ContentRenderer blocks={[block]} />
-          <View style={styles.buttonContainer}>
-            {hasAssignment ? (
-              <>
-                <View style={styles.assignmentCard}>
-                  <Text style={styles.assignmentTitle}>
-                    {assignment?.title || "Lesson Assignment"}
+      <Animated.View
+        style={{
+          opacity: chapterFade,
+          transform: [{ translateY: chapterRise }],
+        }}
+      >
+        {block.type === "quiz" ? (
+          activeQuizQuestions.length > 0 ? (
+            <>
+              {isAdaptiveQuizActive && (
+                <View style={styles.adaptiveBanner}>
+                  <Text style={styles.adaptiveBannerTitle}>
+                    {adaptiveQuiz?.mode === "remedial"
+                      ? "Remedial Practice"
+                      : "Follow-up Practice"}
                   </Text>
-                  <Text style={styles.assignmentInstructions}>
-                    {assignment?.instructions || ""}
+                  <Text style={styles.adaptiveBannerText}>
+                    These AI-generated questions are tailored to your quiz scores.
                   </Text>
-                  {Array.isArray(assignment?.acceptedFileTypes) &&
-                  assignment?.acceptedFileTypes.length > 0 ? (
-                    <Text style={styles.assignmentMeta}>
-                      Accepted: {assignment.acceptedFileTypes.join(", ")}
-                    </Text>
-                  ) : null}
-                  <Text style={styles.assignmentMeta}>
-                    Pass threshold: {assignment?.passingScore ?? 70}/
-                    {assignment?.maxScore ?? 100}
-                  </Text>
-
-                  {assignmentLoading ? (
-                    <ActivityIndicator size="small" color="#0f766e" />
-                  ) : null}
-
-                  {assignmentSubmission ? (
-                    <View style={styles.assignmentStatus}>
-                      <Text style={styles.assignmentStatusTitle}>
-                        Status:{" "}
-                        {assignmentSubmission.status === "graded"
-                          ? assignmentSubmission.passed
-                            ? "Passed"
-                            : "Graded - needs revision"
-                          : "Submitted - awaiting grade"}
-                      </Text>
-                      {typeof assignmentSubmission.score === "number" ? (
-                        <Text style={styles.assignmentStatusText}>
-                          Score: {assignmentSubmission.score}
-                        </Text>
-                      ) : null}
-                      {assignmentSubmission.feedback ? (
-                        <Text style={styles.assignmentStatusText}>
-                          Feedback: {assignmentSubmission.feedback}
-                        </Text>
-                      ) : null}
-                    </View>
-                  ) : null}
-
-                  {!assignmentPassed && (
-                    <View>
-                      <TextInput
-                        value={assignmentFileName}
-                        onChangeText={setAssignmentFileName}
-                        placeholder="File name (e.g. portfolio.pdf)"
-                        style={styles.assignmentInput}
-                      />
-                      <TextInput
-                        value={assignmentFileUrl}
-                        onChangeText={setAssignmentFileUrl}
-                        placeholder="File URL (Drive/GitHub/etc.)"
-                        autoCapitalize="none"
-                        style={styles.assignmentInput}
-                      />
-                      <TextInput
-                        value={assignmentNotes}
-                        onChangeText={setAssignmentNotes}
-                        placeholder="Notes for educator (optional)"
-                        multiline
-                        style={[styles.assignmentInput, styles.assignmentNotes]}
-                      />
-                      <TouchableOpacity
-                        onPress={handleSubmitAssignment}
-                        disabled={submittingAssignment}
-                        style={[
-                          styles.askButton,
-                          submittingAssignment ? styles.askButtonDisabled : null,
-                        ]}
-                      >
-                        <Text style={styles.askButtonText}>
-                          {submittingAssignment
-                            ? "Submitting..."
-                            : assignmentSubmission
-                              ? "Resubmit assignment"
-                              : "Submit assignment"}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
                 </View>
+              )}
+              <Quiz
+                questions={activeQuizQuestions}
+                onComplete={
+                  isAdaptiveQuizActive
+                    ? handleAdaptiveQuizComplete
+                    : handleQuizComplete
+                }
+              />
+            </>
+          ) : (
+            <View style={styles.buttonContainer}>
+              <Text style={styles.emptyText}>
+                No quiz questions available for this chapter.
+              </Text>
+              <Button title="Continue" onPress={moveToNextChapterOrComplete} />
+            </View>
+          )
+        ) : (
+          <>
+            <ContentRenderer blocks={[block]} />
+            <View style={styles.buttonContainer}>
+              {hasAssignment ? (
+                <>
+                  <View style={styles.assignmentCard}>
+                    <Text style={styles.assignmentTitle}>
+                      {assignment?.title || "Lesson Assignment"}
+                    </Text>
+                    <Text style={styles.assignmentInstructions}>
+                      {assignment?.instructions || ""}
+                    </Text>
+                    {Array.isArray(assignment?.acceptedFileTypes) &&
+                    assignment?.acceptedFileTypes.length > 0 ? (
+                      <Text style={styles.assignmentMeta}>
+                        Accepted: {assignment.acceptedFileTypes.join(", ")}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.assignmentMeta}>
+                      Pass threshold: {assignment?.passingScore ?? 70}/
+                      {assignment?.maxScore ?? 100}
+                    </Text>
 
-                {assignmentPassed ? (
-                  <Button title="Continue" onPress={moveToNextChapterOrComplete} />
-                ) : (
-                  <Text style={styles.emptyText}>
-                    Complete and pass this assignment to unlock the next chapter.
-                  </Text>
-                )}
-              </>
-            ) : (
-              <Button title="Mark as Completed" onPress={handleChapterComplete} />
-            )}
-          </View>
-        </>
-      )}
+                    {assignmentLoading ? (
+                      <ActivityIndicator size="small" color="#0f766e" />
+                    ) : null}
+
+                    {assignmentSubmission ? (
+                      <View style={styles.assignmentStatus}>
+                        <Text style={styles.assignmentStatusTitle}>
+                          Status:{" "}
+                          {assignmentSubmission.status === "graded"
+                            ? assignmentSubmission.passed
+                              ? "Passed"
+                              : "Graded - needs revision"
+                            : "Submitted - awaiting grade"}
+                        </Text>
+                        {typeof assignmentSubmission.score === "number" ? (
+                          <Text style={styles.assignmentStatusText}>
+                            Score: {assignmentSubmission.score}
+                          </Text>
+                        ) : null}
+                        {assignmentSubmission.feedback ? (
+                          <Text style={styles.assignmentStatusText}>
+                            Feedback: {assignmentSubmission.feedback}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+
+                    {!assignmentPassed && (
+                      <View>
+                        <TextInput
+                          value={assignmentFileName}
+                          onChangeText={setAssignmentFileName}
+                          placeholder="File name (e.g. portfolio.pdf)"
+                          style={styles.assignmentInput}
+                        />
+                        <TextInput
+                          value={assignmentFileUrl}
+                          onChangeText={setAssignmentFileUrl}
+                          placeholder="File URL (Drive/GitHub/etc.)"
+                          autoCapitalize="none"
+                          style={styles.assignmentInput}
+                        />
+                        <TextInput
+                          value={assignmentNotes}
+                          onChangeText={setAssignmentNotes}
+                          placeholder="Notes for educator (optional)"
+                          multiline
+                          style={[styles.assignmentInput, styles.assignmentNotes]}
+                        />
+                        <TouchableOpacity
+                          onPress={handleSubmitAssignment}
+                          disabled={submittingAssignment}
+                          style={[
+                            styles.askButton,
+                            submittingAssignment ? styles.askButtonDisabled : null,
+                          ]}
+                        >
+                          <Text style={styles.askButtonText}>
+                            {submittingAssignment
+                              ? "Submitting..."
+                              : assignmentSubmission
+                                ? "Resubmit assignment"
+                                : "Submit assignment"}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+
+                  {assignmentPassed ? (
+                    <Button
+                      title="Continue"
+                      onPress={moveToNextChapterOrComplete}
+                    />
+                  ) : (
+                    <Text style={styles.emptyText}>
+                      Complete and pass this assignment to unlock the next chapter.
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <Button title="Mark as Completed" onPress={handleChapterComplete} />
+              )}
+            </View>
+          </>
+        )}
+      </Animated.View>
 
       <View style={styles.discussionSection}>
         <Text style={styles.discussionTitle}>Comments for {lessonTitle}</Text>

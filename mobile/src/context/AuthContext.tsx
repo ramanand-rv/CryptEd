@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, ReactNode } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../config/api";
 
 interface User {
   id: string;
@@ -31,7 +32,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
 
-  const api = axios.create({ baseURL: "http://localhost:5000/api" });
+  const api = axios.create({ baseURL: API_BASE_URL });
 
   const loginWithWallet = async (walletAddress: string, name?: string) => {
     try {

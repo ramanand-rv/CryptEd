@@ -11,8 +11,9 @@ import {
 import { useAuth } from "../context/AuthContext";
 import { useWallet } from "../context/WalletContext";
 import axios from "axios";
+import { API_BASE_ORIGIN } from "../config/api";
 
-const API_BASE_URL = "http://localhost:5000";
+const API_BASE_URL = API_BASE_ORIGIN;
 
 interface NFTCertificate {
   mintAddress: string;

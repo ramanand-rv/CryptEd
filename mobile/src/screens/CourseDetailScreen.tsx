@@ -3,11 +3,8 @@ import { View, Text, Button, StyleSheet, Alert } from "react-native";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import { useWallet } from "../context/WalletContext";
-import {
-  Transaction,
-  SystemProgram,
-  PublicKey,
-} from "@solana/web3.js";
+import { API_BASE_URL } from "../config/api";
+import { Transaction, SystemProgram, PublicKey } from "@solana/web3.js";
 
 const shortenWallet = (address?: string) =>
   address && address.length > 12
@@ -37,7 +34,7 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
   const [course, setCourse] = useState<any>(null);
   const [rewards, setRewards] = useState<CourseRewardsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const { connected, publicKey, connect, signAndSendTransaction, balance } =
     useWallet();
 
@@ -49,12 +46,9 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
 
   const checkIfPurchased = async () => {
     try {
-      const res = await axios.get(
-        "http://localhost:5000/api/purchases/my-courses",
-        {
-          headers: { "x-auth-token": token },
-        },
-      );
+      const res = await axios.get(`${API_BASE_URL}/purchases/my-courses`, {
+        headers: { "x-auth-token": token },
+      });
       const purchasedCourses = res.data;
       setPurchased(purchasedCourses.some((c: any) => c._id === courseId));
     } catch (err) {
@@ -69,8 +63,8 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
   const fetchCourse = async () => {
     try {
       const [courseRes, rewardsRes] = await Promise.all([
-        axios.get(`http://localhost:5000/api/courses/${courseId}`),
-        axios.get(`http://localhost:5000/api/courses/${courseId}/rewards`),
+        axios.get(`${API_BASE_URL}/courses/${courseId}`),
+        axios.get(`${API_BASE_URL}/courses/${courseId}/rewards`),
       ]);
       setCourse(courseRes.data);
       setRewards(rewardsRes.data);
@@ -93,11 +87,33 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
     if (!course) return;
 
     try {
+      const educatorWalletAddress = String(
+        course?.educatorId?.walletAddress || "",
+      ).trim();
+      if (!educatorWalletAddress) {
+        Alert.alert(
+          "Purchase unavailable",
+          "Educator wallet is missing. Please contact support.",
+        );
+        return;
+      }
+
+      let recipientWallet: PublicKey;
+      try {
+        recipientWallet = new PublicKey(educatorWalletAddress);
+      } catch {
+        Alert.alert(
+          "Purchase unavailable",
+          "Educator wallet address is invalid. Please contact support.",
+        );
+        return;
+      }
+
       // Create a transfer transaction
       const transaction = new Transaction().add(
         SystemProgram.transfer({
           fromPubkey: publicKey!,
-          toPubkey: new PublicKey("EducatorWalletAddressHere"), // you need to get educator's wallet from course.educatorId
+          toPubkey: recipientWallet,
           lamports: course.price,
         }),
       );
@@ -110,7 +126,7 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
 
       // Verify with backend
       await axios.post(
-        "http://localhost:5000/api/purchases/verify",
+        `${API_BASE_URL}/purchases/verify`,
         {
           courseId: course._id,
           transactionSignature: signature,
@@ -122,7 +138,7 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
       );
 
       Alert.alert("Success", "Course purchased! You can now start learning.");
-      // Navigate to course player (Day 4)
+      setPurchased(true);
     } catch (err: any) {
       Alert.alert("Purchase failed", err.message);
     }
@@ -151,10 +167,12 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
         <View style={styles.rewardsCard}>
           <Text style={styles.rewardsTitle}>Reward Pool</Text>
           <Text style={styles.rewardsText}>
-            Total: {((rewards?.rewardPool?.totalAmount || 0) / 1e9).toFixed(2)} SOL
+            Total: {((rewards?.rewardPool?.totalAmount || 0) / 1e9).toFixed(2)}{" "}
+            SOL
           </Text>
           <Text style={styles.rewardsText}>
-            Remaining: {((rewards?.rewardPool?.remaining || 0) / 1e9).toFixed(2)} SOL
+            Remaining:{" "}
+            {((rewards?.rewardPool?.remaining || 0) / 1e9).toFixed(2)} SOL
           </Text>
           <Text style={styles.rewardsText}>
             Winners: {rewards?.rewardPool?.totalWinners || 0}/
@@ -165,7 +183,10 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
             <Text style={styles.rewardsMuted}>No payouts yet.</Text>
           ) : (
             (rewards?.recentWinners || []).map((winner, index) => (
-              <Text key={`${winner.userId}-${index}`} style={styles.rewardsText}>
+              <Text
+                key={`${winner.userId}-${index}`}
+                style={styles.rewardsText}
+              >
                 {winner.name || "Learner"} won{" "}
                 {((winner.amount || 0) / 1e9).toFixed(3)} SOL (
                 {shortenWallet(winner.walletAddress)})
@@ -179,7 +200,6 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
           Wallet: {publicKey?.toBase58().slice(0, 8)}... Balance: {balance} SOL
         </Text>
       )}
-      <Button title="Purchase Course" onPress={handlePurchase} />
 
       {purchased ? (
         <Button

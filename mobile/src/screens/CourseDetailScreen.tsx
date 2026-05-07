@@ -3,18 +3,38 @@ import { View, Text, Button, StyleSheet, Alert } from "react-native";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import { useWallet } from "../context/WalletContext";
-import {
-  Transaction,
-  SystemProgram,
-  PublicKey,
-  LAMPORTS_PER_SOL,
-} from "@solana/web3.js";
+import { API_BASE_URL } from "../config/api";
+import { Transaction, SystemProgram, PublicKey } from "@solana/web3.js";
+
+const shortenWallet = (address?: string) =>
+  address && address.length > 12
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : address || "Wallet unavailable";
+
+interface CourseRewardsResponse {
+  rewardPool: {
+    totalAmount: number;
+    remaining: number;
+    winnersCount: number;
+    paidOut: number;
+    totalWinners: number;
+  };
+  recentWinners: Array<{
+    userId: string;
+    name: string;
+    walletAddress?: string;
+    amount: number;
+    txSignature?: string;
+    awardedAt?: string;
+  }>;
+}
 
 const CourseDetailScreen = ({ route, navigation }: any) => {
   const { courseId } = route.params;
   const [course, setCourse] = useState<any>(null);
+  const [rewards, setRewards] = useState<CourseRewardsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const { connected, publicKey, connect, signAndSendTransaction, balance } =
     useWallet();
 
@@ -26,12 +46,9 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
 
   const checkIfPurchased = async () => {
     try {
-      const res = await axios.get(
-        "http://localhost:5000/api/purchases/my-courses",
-        {
-          headers: { "x-auth-token": token },
-        },
-      );
+      const res = await axios.get(`${API_BASE_URL}/purchases/my-courses`, {
+        headers: { "x-auth-token": token },
+      });
       const purchasedCourses = res.data;
       setPurchased(purchasedCourses.some((c: any) => c._id === courseId));
     } catch (err) {
@@ -45,10 +62,12 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
 
   const fetchCourse = async () => {
     try {
-      const res = await axios.get(
-        `http://localhost:5000/api/courses/${courseId}`,
-      );
-      setCourse(res.data);
+      const [courseRes, rewardsRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/courses/${courseId}`),
+        axios.get(`${API_BASE_URL}/courses/${courseId}/rewards`),
+      ]);
+      setCourse(courseRes.data);
+      setRewards(rewardsRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -68,11 +87,33 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
     if (!course) return;
 
     try {
+      const educatorWalletAddress = String(
+        course?.educatorId?.walletAddress || "",
+      ).trim();
+      if (!educatorWalletAddress) {
+        Alert.alert(
+          "Purchase unavailable",
+          "Educator wallet is missing. Please contact support.",
+        );
+        return;
+      }
+
+      let recipientWallet: PublicKey;
+      try {
+        recipientWallet = new PublicKey(educatorWalletAddress);
+      } catch {
+        Alert.alert(
+          "Purchase unavailable",
+          "Educator wallet address is invalid. Please contact support.",
+        );
+        return;
+      }
+
       // Create a transfer transaction
       const transaction = new Transaction().add(
         SystemProgram.transfer({
           fromPubkey: publicKey!,
-          toPubkey: new PublicKey("EducatorWalletAddressHere"), // you need to get educator's wallet from course.educatorId
+          toPubkey: recipientWallet,
           lamports: course.price,
         }),
       );
@@ -85,7 +126,7 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
 
       // Verify with backend
       await axios.post(
-        "http://localhost:5000/api/purchases/verify",
+        `${API_BASE_URL}/purchases/verify`,
         {
           courseId: course._id,
           transactionSignature: signature,
@@ -97,7 +138,7 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
       );
 
       Alert.alert("Success", "Course purchased! You can now start learning.");
-      // Navigate to course player (Day 4)
+      setPurchased(true);
     } catch (err: any) {
       Alert.alert("Purchase failed", err.message);
     }
@@ -122,12 +163,43 @@ const CourseDetailScreen = ({ route, navigation }: any) => {
       <Text style={styles.description}>{course.description}</Text>
       <Text style={styles.price}>Price: {course.price / 1e9} SOL</Text>
       <Text>Educator: {course.educatorId?.name}</Text>
+      {(rewards?.rewardPool?.totalAmount || 0) > 0 && (
+        <View style={styles.rewardsCard}>
+          <Text style={styles.rewardsTitle}>Reward Pool</Text>
+          <Text style={styles.rewardsText}>
+            Total: {((rewards?.rewardPool?.totalAmount || 0) / 1e9).toFixed(2)}{" "}
+            SOL
+          </Text>
+          <Text style={styles.rewardsText}>
+            Remaining:{" "}
+            {((rewards?.rewardPool?.remaining || 0) / 1e9).toFixed(2)} SOL
+          </Text>
+          <Text style={styles.rewardsText}>
+            Winners: {rewards?.rewardPool?.totalWinners || 0}/
+            {rewards?.rewardPool?.winnersCount || 0}
+          </Text>
+          <Text style={styles.rewardsSubtitle}>Recent winners</Text>
+          {(rewards?.recentWinners || []).length === 0 ? (
+            <Text style={styles.rewardsMuted}>No payouts yet.</Text>
+          ) : (
+            (rewards?.recentWinners || []).map((winner, index) => (
+              <Text
+                key={`${winner.userId}-${index}`}
+                style={styles.rewardsText}
+              >
+                {winner.name || "Learner"} won{" "}
+                {((winner.amount || 0) / 1e9).toFixed(3)} SOL (
+                {shortenWallet(winner.walletAddress)})
+              </Text>
+            ))
+          )}
+        </View>
+      )}
       {connected && (
         <Text>
           Wallet: {publicKey?.toBase58().slice(0, 8)}... Balance: {balance} SOL
         </Text>
       )}
-      <Button title="Purchase Course" onPress={handlePurchase} />
 
       {purchased ? (
         <Button
@@ -146,6 +218,19 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: "bold", marginBottom: 8 },
   description: { fontSize: 16, marginBottom: 16 },
   price: { fontSize: 18, color: "#2ecc71", marginBottom: 8 },
+  rewardsCard: {
+    marginTop: 12,
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+  },
+  rewardsTitle: { fontSize: 16, fontWeight: "700", marginBottom: 6 },
+  rewardsSubtitle: { marginTop: 8, fontWeight: "600" },
+  rewardsText: { fontSize: 13, color: "#065f46", marginTop: 2 },
+  rewardsMuted: { fontSize: 13, color: "#6b7280" },
 });
 
 export default CourseDetailScreen;

@@ -1,16 +1,45 @@
 import express, { Request, Response } from "express";
 import auth from "../middleware/auth.js";
 import Progress from "../models/Progress.js";
-import Course from "../models/Course.js";
-import User from "../models/User.js";
-import { mintCourseCompletionNFT } from "../services/metaplex.js";
-import { distributeReward } from "../services/reward.js";
+import { PASSING_SCORE, clampScore } from "../services/ai.js";
+import type { AdaptiveMode } from "../services/ai.js";
+import { ensureCourseCompletionAndCertificates } from "../services/completion.js";
 
 const router = express.Router();
 
 interface AuthRequest extends Request {
   user?: { userId: string; role: string };
 }
+
+const toFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const normalizeAdaptiveMode = (value: unknown): AdaptiveMode | null => {
+  if (value === "remedial" || value === "follow-up") return value;
+  return null;
+};
+
+const resolveAttemptType = (
+  isAdaptiveAttempt: boolean,
+  adaptiveMode: AdaptiveMode | null,
+) => {
+  if (!isAdaptiveAttempt) return "standard";
+  if (adaptiveMode === "remedial") return "adaptive-remedial";
+  if (adaptiveMode === "follow-up") return "adaptive-follow-up";
+  return "adaptive-unknown";
+};
 
 // Get progress for a specific course
 router.get("/:courseId", auth, async (req: AuthRequest, res: Response) => {
@@ -21,15 +50,28 @@ router.get("/:courseId", auth, async (req: AuthRequest, res: Response) => {
     });
     res.json(progress || { completedChapters: [], quizScores: [] });
   } catch (err: any) {
+    if (err?.message === "Course not found" || err?.message === "User not found") {
+      return res.status(404).json({ msg: err.message });
+    }
     res.status(500).json({ error: err.message });
   }
 });
 
 router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
   try {
-    const { chapterIndex, quizScore } = req.body;
+    const { chapterIndex, quizScore, isAdaptiveAttempt, adaptiveMode } = req.body;
     const userId = req.user?.userId;
+    if (!userId) return res.status(401).json({ msg: "Unauthorized" });
+
     const courseId = req.params.courseId;
+    const numericChapterIndex = Number.parseInt(String(chapterIndex), 10);
+    const hasValidChapterIndex =
+      Number.isInteger(numericChapterIndex) && numericChapterIndex >= 0;
+    const rawQuizScore = toFiniteNumber(quizScore);
+    const hasQuizScore = rawQuizScore !== null;
+    const normalizedQuizScore = hasQuizScore ? clampScore(rawQuizScore) : null;
+    const adaptiveAttempt = isAdaptiveAttempt === true;
+    const normalizedAdaptiveMode = normalizeAdaptiveMode(adaptiveMode);
 
     let progress = await Progress.findOne({ userId, courseId });
     if (!progress) {
@@ -37,70 +79,30 @@ router.post("/:courseId", auth, async (req: AuthRequest, res: Response) => {
         userId,
         courseId,
         completedChapters: [],
-        quizScores: {},
+        quizScores: [],
       });
     }
 
     if (
-      chapterIndex !== undefined &&
-      !progress.completedChapters.includes(chapterIndex)
+      hasValidChapterIndex &&
+      !progress.completedChapters.includes(numericChapterIndex)
     ) {
-      progress.completedChapters.push(chapterIndex);
+      progress.completedChapters.push(numericChapterIndex);
     }
 
-    if (quizScore !== undefined) {
+    if (hasQuizScore && normalizedQuizScore !== null && hasValidChapterIndex) {
       progress.quizScores.push({
-        blockIndex: chapterIndex,
-        score: quizScore,
-        passed: quizScore >= 70, // Assuming 70 is passing grade
+        blockIndex: numericChapterIndex,
+        score: normalizedQuizScore,
+        passed: normalizedQuizScore >= PASSING_SCORE,
+        attemptType: resolveAttemptType(adaptiveAttempt, normalizedAdaptiveMode),
+        attemptedAt: new Date(),
       });
     }
 
-    // Check if course is completed
-    const course = await Course.findById(courseId).populate("educatorId");
-    if (!course) return res.status(404).json({ msg: "Course not found" });
-
-    const totalChapters = course.content.length;
-    const isCompleted =
-      progress.completedChapters.length >= totalChapters &&
-      !progress.completedAt;
-
-    if (isCompleted) {
-      progress.completedAt = new Date();
-      const educatorId = course.educatorId
-        ? String((course.educatorId as any)?._id ?? course.educatorId)
-        : undefined;
-      const educator = educatorId ? await User.findById(educatorId) : null;
-      const educatorWalletVerified = Boolean(educator?.walletVerifiedAt);
-
-      // Mint NFT if metadata URI exists
-      if (course.nftMetadataUri && educatorWalletVerified) {
-        try {
-          // Get learner's wallet address (assuming user has walletAddress field)
-          const user = await User.findById(userId);
-          if (user?.walletAddress) {
-            const mintAddress = await mintCourseCompletionNFT(
-              user.walletAddress,
-              course.nftMetadataUri,
-              course.title,
-            );
-            // Store mint address in user's ownedNFTs
-            await User.findByIdAndUpdate(userId, {
-              $push: { ownedNFTs: mintAddress },
-            });
-          }
-        } catch (err) {
-          console.error("NFT minting failed:", err);
-          // Don't fail the whole request, just log error
-        }
-      }
-      if (userId && educatorWalletVerified) {
-        await distributeReward(courseId, userId);
-      }
-    }
-
+    await ensureCourseCompletionAndCertificates(courseId, userId, progress);
     await progress.save();
-    res.json(progress);
+    res.json(progress.toObject());
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

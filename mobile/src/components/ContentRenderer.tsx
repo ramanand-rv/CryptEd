@@ -37,20 +37,20 @@ const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks }) => {
         );
       case "bulletList":
       case "orderedList":
-        // For simplicity, just render as text – you can enhance later
+        // For simplicity, just render as text - you can enhance later
         return (
           <View key={index}>
             {block.content?.map((item: any, i: number) => (
               <Text key={i} style={styles.listItem}>
-                {block.type === "bulletList" ? "• " : `${i + 1}. `}
+                {block.type === "bulletList" ? "- " : `${i + 1}. `}
                 {item.content?.[0]?.text || ""}
               </Text>
             ))}
           </View>
         );
       case "video":
-        // YouTube video – you might need a WebView or better handling
-        // For now, we'll show placeholder
+        // YouTube video - you might need a WebView or better handling
+        // For now, we show placeholder
         return (
           <View key={index} style={styles.videoPlaceholder}>
             <Text>Video: {block.attrs?.src || "URL not available"}</Text>

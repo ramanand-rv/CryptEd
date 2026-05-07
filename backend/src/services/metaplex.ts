@@ -3,7 +3,12 @@ import {
   keypairIdentity,
   irysStorage,
 } from "@metaplex-foundation/js";
-import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  ParsedAccountData,
+  PublicKey,
+} from "@solana/web3.js";
 import bs58 from "bs58";
 import dotenv from "dotenv";
 
@@ -53,4 +58,43 @@ export async function mintCourseCompletionNFT(
     console.error("NFT minting error:", err);
     throw err;
   }
+}
+
+export interface OnChainCertificateData {
+  mintAddress: string;
+  metadataUri?: string;
+  ownerAddress?: string;
+}
+
+export async function getCourseCompletionNFT(
+  mintAddress: string,
+): Promise<OnChainCertificateData> {
+  const mintPublicKey = new PublicKey(mintAddress);
+  const nft = await getMetaplex().nfts().findByMint({ mintAddress: mintPublicKey });
+  const largestAccounts = await connection.getTokenLargestAccounts(mintPublicKey);
+
+  let ownerAddress: string | undefined;
+  const ownerTokenAccount = largestAccounts.value.find((account) => account.amount === "1");
+
+  if (ownerTokenAccount?.address) {
+    const tokenAccountInfo = await connection.getParsedAccountInfo(
+      ownerTokenAccount.address,
+    );
+    const parsedData = tokenAccountInfo.value?.data;
+    if (parsedData && "parsed" in parsedData) {
+      const info = (parsedData as ParsedAccountData).parsed?.info as
+        | Record<string, unknown>
+        | undefined;
+      const owner = info?.owner;
+      if (typeof owner === "string") {
+        ownerAddress = owner;
+      }
+    }
+  }
+
+  return {
+    mintAddress,
+    metadataUri: nft.uri,
+    ownerAddress,
+  };
 }

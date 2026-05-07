@@ -57,7 +57,7 @@ const QuizComponent: React.FC<QuizComponentProps> = ({
         <Text
           style={[styles.resultText, passed ? styles.passed : styles.failed]}
         >
-          {passed ? "✅ Passed!" : "❌ Failed. Try again."}
+          {passed ? "[PASS] Passed!" : "[FAIL] Failed. Try again."}
         </Text>
       </View>
     );

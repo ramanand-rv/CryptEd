@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,23 +6,142 @@ import {
   StyleSheet,
   Alert,
   ScrollView,
+  TextInput,
+  TouchableOpacity,
+  ActivityIndicator,
+  Animated,
+  Easing,
 } from "react-native";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import ContentRenderer from "../components/ContentRenderer";
 import Quiz from "../components/Quiz";
 import ConfettiCannon from "react-native-confetti-cannon"; // Import confetti
+import { API_BASE_URL } from "../config/api";
+
+interface CommentAuthor {
+  id: string;
+  name: string;
+  role: "learner" | "educator";
+}
+
+interface CommentThread {
+  _id: string;
+  blockIndex: number;
+  parentId: string | null;
+  text: string;
+  author: CommentAuthor;
+  replies: CommentThread[];
+  createdAt: string;
+}
+
+interface AdaptiveQuizQuestion {
+  question: string;
+  options: string[];
+  correct: number;
+}
+
+interface AdaptiveQuizPayload {
+  mode: "remedial" | "follow-up";
+  chapterIndex: number;
+  trigger: {
+    latestScore: number;
+    averageScore: number;
+    attempts: number;
+  };
+  questions: AdaptiveQuizQuestion[];
+}
+
+interface AiSuggestResponse {
+  chapterIndex: number | null;
+  questions: AdaptiveQuizQuestion[];
+  adaptive: {
+    mode: "remedial" | "follow-up";
+    trigger?: {
+      latestScore?: number;
+      averageScore?: number;
+      attempts?: number;
+    } | null;
+  } | null;
+}
+
+interface AssignmentSubmission {
+  _id: string;
+  status: "submitted" | "graded";
+  fileName: string;
+  fileUrl: string;
+  notes: string;
+  score: number | null;
+  feedback: string;
+  passed: boolean | null;
+  gradedAt: string | null;
+  submittedAt: string;
+}
+
+interface CourseAssignment {
+  _id: string;
+  lessonId: string;
+  blockIndex: number;
+  title: string;
+  instructions: string;
+  acceptedFileTypes: string[];
+  maxScore: number;
+  passingScore: number;
+  isRequired: boolean;
+  isActive: boolean;
+  submission?: AssignmentSubmission | null;
+}
+
+const getLessonDisplayTitle = (block: any, chapterIndex: number) => {
+  const title = block?.attrs?.title;
+  if (typeof title === "string" && title.trim()) {
+    return title.trim();
+  }
+  return `Chapter ${chapterIndex + 1}`;
+};
+
+const formatDateTime = (value?: string) => {
+  if (!value) return "Unknown time";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Unknown time";
+  return parsed.toLocaleString();
+};
 
 const CoursePlayerScreen = ({ route, navigation }: any) => {
   const { courseId } = route.params;
   const [course, setCourse] = useState<any>(null);
   const [progress, setProgress] = useState<any>({
     completedChapters: [],
-    quizScores: {},
+    quizScores: [],
   });
+  const [adaptiveQuiz, setAdaptiveQuiz] = useState<AdaptiveQuizPayload | null>(
+    null,
+  );
   const [currentChapter, setCurrentChapter] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showConfetti, setShowConfetti] = useState(false); // New state
+  const [commentThreads, setCommentThreads] = useState<CommentThread[]>([]);
+  const [commentLoading, setCommentLoading] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const [activeReplyParentId, setActiveReplyParentId] = useState<string | null>(
+    null,
+  );
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [postingReplyParentId, setPostingReplyParentId] = useState<string | null>(
+    null,
+  );
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignment, setAssignment] = useState<CourseAssignment | null>(null);
+  const [assignmentSubmission, setAssignmentSubmission] =
+    useState<AssignmentSubmission | null>(null);
+  const [assignmentFileName, setAssignmentFileName] = useState("");
+  const [assignmentFileUrl, setAssignmentFileUrl] = useState("");
+  const [assignmentNotes, setAssignmentNotes] = useState("");
+  const [submittingAssignment, setSubmittingAssignment] = useState(false);
+  const chapterFade = useRef(new Animated.Value(0)).current;
+  const chapterRise = useRef(new Animated.Value(18)).current;
   const { token } = useAuth();
 
   useEffect(() => {
@@ -32,16 +151,31 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
   const fetchCourseAndProgress = async () => {
     try {
       const [courseRes, progressRes] = await Promise.all([
-        axios.get(`http://localhost:5000/api/courses/${courseId}`),
-        axios.get(`http://localhost:5000/api/progress/${courseId}`, {
+        axios.get(`${API_BASE_URL}/courses/${courseId}`),
+        axios.get(`${API_BASE_URL}/progress/${courseId}`, {
           headers: { "x-auth-token": token },
         }),
       ]);
       setCourse(courseRes.data);
-      setProgress(progressRes.data);
+      setAdaptiveQuiz(null);
+
+      const completedChapters = Array.isArray(
+        progressRes.data?.completedChapters,
+      )
+        ? progressRes.data.completedChapters
+        : [];
+      const quizScores = Array.isArray(progressRes.data?.quizScores)
+        ? progressRes.data.quizScores
+        : [];
+
+      setProgress({
+        ...(progressRes.data || {}),
+        completedChapters,
+        quizScores,
+      });
 
       // Resume from first incomplete chapter
-      const completed = progressRes.data.completedChapters || [];
+      const completed = completedChapters;
       const firstIncomplete = completed.length;
       setCurrentChapter(
         firstIncomplete < courseRes.data.content.length ? firstIncomplete : 0,
@@ -53,10 +187,84 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     }
   };
 
+  const moveToNextChapterOrComplete = () => {
+    if (currentChapter + 1 < course.content.length) {
+      setCurrentChapter((prev) => prev + 1);
+      return;
+    }
+
+    setShowConfetti(true);
+    Alert.alert("Congratulations!", "You have completed the course!");
+  };
+
+  const syncProgressFromResponse = (data: any) => {
+    setProgress((prev: any) => ({
+      ...prev,
+      ...(data || {}),
+      completedChapters: Array.isArray(data?.completedChapters)
+        ? data.completedChapters
+        : prev.completedChapters,
+      quizScores: Array.isArray(data?.quizScores)
+        ? data.quizScores
+        : prev.quizScores,
+    }));
+  };
+
+  const fetchAdaptiveSuggestion = async (
+    chapterIndex: number,
+  ): Promise<AdaptiveQuizPayload | null> => {
+    if (!token) return null;
+
+    try {
+      const res = await axios.post<AiSuggestResponse>(
+        `${API_BASE_URL}/courses/${courseId}/ai-suggest`,
+        { chapterIndex },
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+
+      const suggestion = res.data;
+      const adaptiveMode = suggestion?.adaptive?.mode;
+      const questions = Array.isArray(suggestion?.questions)
+        ? suggestion.questions
+        : [];
+
+      if (
+        (adaptiveMode !== "remedial" && adaptiveMode !== "follow-up") ||
+        questions.length === 0
+      ) {
+        return null;
+      }
+
+      const trigger = suggestion?.adaptive?.trigger || {};
+      return {
+        mode: adaptiveMode,
+        chapterIndex:
+          typeof suggestion?.chapterIndex === "number"
+            ? suggestion.chapterIndex
+            : chapterIndex,
+        trigger: {
+          latestScore: Number(trigger.latestScore || 0),
+          averageScore: Number(trigger.averageScore || 0),
+          attempts: Number(trigger.attempts || 0),
+        },
+        questions,
+      };
+    } catch (err: any) {
+      const statusCode = err?.response?.status;
+      if (statusCode && statusCode < 500) {
+        return null;
+      }
+      console.error("Failed to fetch adaptive suggestion", err);
+      return null;
+    }
+  };
+
   const handleChapterComplete = async () => {
     try {
       await axios.post(
-        `http://localhost:5000/api/progress/${courseId}`,
+        `${API_BASE_URL}/progress/${courseId}`,
         {
           chapterIndex: currentChapter,
         },
@@ -68,19 +276,12 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
       // Update local progress
       setProgress((prev: any) => ({
         ...prev,
-        completedChapters: [...prev.completedChapters, currentChapter],
+        completedChapters: Array.from(
+          new Set([...(prev.completedChapters || []), currentChapter]),
+        ),
       }));
 
-      // Move to next chapter if available
-      if (currentChapter + 1 < course.content.length) {
-        setCurrentChapter((prev) => prev + 1);
-      } else {
-        // Course completed!
-        setShowConfetti(true); // Trigger confetti
-        Alert.alert("Congratulations!", "You have completed the course!");
-        // can do: navigate back to course list after a delay
-        // setTimeout(() => navigation.goBack(), 3000);
-      }
+      moveToNextChapterOrComplete();
     } catch (err) {
       console.error(err);
       Alert.alert("Error", "Failed to save progress");
@@ -89,8 +290,8 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
 
   const handleQuizComplete = async (score: number) => {
     try {
-      await axios.post(
-        `http://localhost:5000/api/progress/${courseId}`,
+      const res = await axios.post(
+        `${API_BASE_URL}/progress/${courseId}`,
         {
           chapterIndex: currentChapter,
           quizScore: score,
@@ -100,28 +301,281 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
         },
       );
 
-      Alert.alert("Quiz completed!", `Your score: ${score.toFixed(0)}%`);
+      syncProgressFromResponse(res.data);
+      const adaptiveCandidate = await fetchAdaptiveSuggestion(currentChapter);
 
-      // Update local progress
-      setProgress((prev: any) => ({
-        ...prev,
-        completedChapters: [...prev.completedChapters, currentChapter],
-        quizScores: { ...prev.quizScores, [currentChapter]: score },
-      }));
-
-      // Move to next chapter
-      if (currentChapter + 1 < course.content.length) {
-        setCurrentChapter((prev) => prev + 1);
-      } else {
-        // Course completed!
-        setShowConfetti(true); // Trigger confetti
-        Alert.alert("Congratulations!", "You have completed the course!");
+      if (adaptiveCandidate) {
+        setAdaptiveQuiz(adaptiveCandidate);
+        const modeLabel =
+          adaptiveCandidate.mode === "remedial" ? "Remedial" : "Follow-up";
+        Alert.alert(
+          `${modeLabel} quiz ready`,
+          `Your score: ${score.toFixed(0)}%. We've prepared a tailored practice quiz.`,
+        );
+        return;
       }
+
+      Alert.alert("Quiz completed!", `Your score: ${score.toFixed(0)}%`);
+      moveToNextChapterOrComplete();
     } catch (err) {
       console.error(err);
       Alert.alert("Error", "Failed to save quiz score");
     }
   };
+
+  const handleAdaptiveQuizComplete = async (score: number) => {
+    if (!adaptiveQuiz) return;
+    const adaptiveMode = adaptiveQuiz.mode;
+
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/progress/${courseId}`,
+        {
+          chapterIndex: currentChapter,
+          quizScore: score,
+          isAdaptiveAttempt: true,
+          adaptiveMode,
+        },
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+
+      syncProgressFromResponse(res.data);
+      setAdaptiveQuiz(null);
+
+      const modeLabel = adaptiveMode === "remedial" ? "Remedial" : "Follow-up";
+      Alert.alert(
+        `${modeLabel} quiz completed!`,
+        `Your score: ${score.toFixed(0)}%`,
+      );
+      moveToNextChapterOrComplete();
+    } catch (err) {
+      console.error(err);
+      Alert.alert("Error", "Failed to save adaptive quiz score");
+    }
+  };
+
+  const appendReplyToTree = (
+    threads: CommentThread[],
+    parentId: string,
+    reply: CommentThread,
+  ): CommentThread[] => {
+    return threads.map((thread) => {
+      if (thread._id === parentId) {
+        return { ...thread, replies: [...(thread.replies || []), reply] };
+      }
+      if (!thread.replies?.length) return thread;
+      return {
+        ...thread,
+        replies: appendReplyToTree(thread.replies, parentId, reply),
+      };
+    });
+  };
+
+  const fetchComments = async () => {
+    if (!course || !token) return;
+    const block = course.content?.[currentChapter];
+    if (!block) {
+      setCommentThreads([]);
+      return;
+    }
+
+    setCommentLoading(true);
+    setCommentError(null);
+
+    try {
+      const res = await axios.get(
+        `${API_BASE_URL}/courses/${courseId}/comments`,
+        {
+          headers: { "x-auth-token": token },
+          params: { blockIndex: currentChapter },
+        },
+      );
+      const nextThreads = Array.isArray(res.data?.comments)
+        ? (res.data.comments as CommentThread[])
+        : [];
+      setCommentThreads(nextThreads);
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to load comments.";
+      setCommentError(message);
+      setCommentThreads([]);
+    } finally {
+      setCommentLoading(false);
+    }
+  };
+
+  const fetchAssignmentForCurrentChapter = async () => {
+    if (!course || !token) return;
+    const block = course.content?.[currentChapter];
+    const lessonId = String(block?.attrs?.lessonId || "").trim();
+
+    if (block?.type !== "lesson" || !lessonId) {
+      setAssignment(null);
+      setAssignmentSubmission(null);
+      return;
+    }
+
+    setAssignmentLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE_URL}/courses/${courseId}/assignments`, {
+        headers: { "x-auth-token": token },
+        params: { lessonId },
+      });
+      const assignments = Array.isArray(res.data?.assignments)
+        ? res.data.assignments
+        : [];
+      const nextAssignment = (assignments[0] || null) as CourseAssignment | null;
+      setAssignment(nextAssignment);
+      const submission =
+        nextAssignment?.submission && typeof nextAssignment.submission === "object"
+          ? (nextAssignment.submission as AssignmentSubmission)
+          : null;
+      setAssignmentSubmission(submission);
+      if (submission) {
+        setAssignmentFileName(submission.fileName || "");
+        setAssignmentFileUrl(submission.fileUrl || "");
+        setAssignmentNotes(submission.notes || "");
+      } else {
+        setAssignmentFileName("");
+        setAssignmentFileUrl("");
+        setAssignmentNotes("");
+      }
+    } catch (err: any) {
+      console.error("Failed to load assignment", err);
+      setAssignment(null);
+      setAssignmentSubmission(null);
+    } finally {
+      setAssignmentLoading(false);
+    }
+  };
+
+  const handleSubmitAssignment = async () => {
+    if (!assignment || !token) return;
+    const fileName = assignmentFileName.trim();
+    const fileUrl = assignmentFileUrl.trim();
+    const notes = assignmentNotes.trim();
+
+    if (!fileName || !fileUrl) {
+      Alert.alert("Submission required", "Please provide file name and file URL.");
+      return;
+    }
+
+    setSubmittingAssignment(true);
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/courses/${courseId}/assignments/${assignment._id}/submissions`,
+        { fileName, fileUrl, notes },
+        { headers: { "x-auth-token": token } },
+      );
+      const submission = res.data?.submission as AssignmentSubmission | undefined;
+      if (submission?._id) {
+        setAssignmentSubmission(submission);
+      }
+      Alert.alert(
+        "Assignment submitted",
+        "Your submission is now pending educator review.",
+      );
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to submit assignment.";
+      Alert.alert("Unable to submit", message);
+    } finally {
+      setSubmittingAssignment(false);
+    }
+  };
+
+  const handlePostComment = async (parentId?: string) => {
+    if (!course || !token) return;
+    const text = parentId
+      ? (replyDrafts[parentId] || "").trim()
+      : commentText.trim();
+    if (!text) {
+      Alert.alert("Comment required", "Please type your message first.");
+      return;
+    }
+
+    if (parentId) {
+      setPostingReplyParentId(parentId);
+    } else {
+      setPostingComment(true);
+    }
+
+    try {
+      const res = await axios.post(
+        `${API_BASE_URL}/courses/${courseId}/comments`,
+        {
+          blockIndex: currentChapter,
+          text,
+          ...(parentId ? { parentId } : {}),
+        },
+        {
+          headers: { "x-auth-token": token },
+        },
+      );
+      const createdComment = res.data?.comment as CommentThread | undefined;
+      if (createdComment?._id) {
+        if (createdComment.parentId) {
+          setCommentThreads((prev) =>
+            appendReplyToTree(prev, createdComment.parentId!, createdComment),
+          );
+        } else {
+          setCommentThreads((prev) => [...prev, createdComment]);
+        }
+      }
+
+      if (parentId) {
+        setReplyDrafts((prev) => ({ ...prev, [parentId]: "" }));
+        setActiveReplyParentId(null);
+      } else {
+        setCommentText("");
+      }
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.msg ||
+        err?.response?.data?.error ||
+        "Failed to post comment.";
+      Alert.alert("Unable to post", message);
+    } finally {
+      if (parentId) {
+        setPostingReplyParentId(null);
+      } else {
+        setPostingComment(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    fetchComments();
+  }, [course, currentChapter, token]);
+
+  useEffect(() => {
+    fetchAssignmentForCurrentChapter();
+  }, [course, currentChapter, token]);
+
+  useEffect(() => {
+    chapterFade.setValue(0);
+    chapterRise.setValue(18);
+    Animated.parallel([
+      Animated.timing(chapterFade, {
+        toValue: 1,
+        duration: 340,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(chapterRise, {
+        toValue: 0,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [chapterFade, chapterRise, currentChapter, adaptiveQuiz?.mode]);
 
   if (loading)
     return (
@@ -137,25 +591,280 @@ const CoursePlayerScreen = ({ route, navigation }: any) => {
     );
 
   const block = course.content[currentChapter];
+  const lessonTitle = getLessonDisplayTitle(block, currentChapter);
+  const canComment = Boolean(token);
+  const hasAssignment = Boolean(assignment?._id && assignment?.isActive !== false);
+  const assignmentPassed = assignmentSubmission?.passed === true;
+  const isAdaptiveQuizActive =
+    block?.type === "quiz" &&
+    adaptiveQuiz?.chapterIndex === currentChapter &&
+    Array.isArray(adaptiveQuiz?.questions) &&
+    adaptiveQuiz.questions.length > 0;
+  const activeQuizQuestions = isAdaptiveQuizActive
+    ? adaptiveQuiz?.questions || []
+    : block?.attrs?.questions || [];
+
+  const renderCommentThread = (thread: CommentThread, depth = 0): React.ReactNode => {
+    const isReplying = activeReplyParentId === thread._id;
+    return (
+      <View
+        key={thread._id}
+        style={[styles.threadCard, depth > 0 ? styles.threadReplyDepth : null]}
+      >
+        <Text style={styles.threadMeta}>
+          {thread.author?.name || "User"} | {formatDateTime(thread.createdAt)}
+        </Text>
+        <Text style={styles.threadQuestion}>{thread.text}</Text>
+
+        <TouchableOpacity
+          onPress={() =>
+            setActiveReplyParentId((prev) =>
+              prev === thread._id ? null : thread._id,
+            )
+          }
+        >
+          <Text style={styles.replyAction}>
+            {isReplying ? "Cancel" : "Reply"}
+          </Text>
+        </TouchableOpacity>
+
+        {isReplying && (
+          <View style={styles.askContainer}>
+            <TextInput
+              value={replyDrafts[thread._id] || ""}
+              onChangeText={(value) =>
+                setReplyDrafts((prev) => ({ ...prev, [thread._id]: value }))
+              }
+              placeholder="Write a reply..."
+              multiline
+              style={styles.askInput}
+            />
+            <TouchableOpacity
+              onPress={() => handlePostComment(thread._id)}
+              disabled={postingReplyParentId === thread._id}
+              style={[
+                styles.askButton,
+                postingReplyParentId === thread._id
+                  ? styles.askButtonDisabled
+                  : null,
+              ]}
+            >
+              <Text style={styles.askButtonText}>
+                {postingReplyParentId === thread._id ? "Posting..." : "Post reply"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {(thread.replies || []).map((reply) => renderCommentThread(reply, depth + 1))}
+      </View>
+    );
+  };
 
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.chapterIndicator}>
         Chapter {currentChapter + 1} of {course.content.length}
       </Text>
-      {block.type === "quiz" ? (
-        <Quiz
-          questions={block.attrs?.questions || []}
-          onComplete={handleQuizComplete}
-        />
-      ) : (
-        <>
-          <ContentRenderer blocks={[block]} />
-          <View style={styles.buttonContainer}>
-            <Button title="Mark as Completed" onPress={handleChapterComplete} />
+      <Animated.View
+        style={{
+          opacity: chapterFade,
+          transform: [{ translateY: chapterRise }],
+        }}
+      >
+        {block.type === "quiz" ? (
+          activeQuizQuestions.length > 0 ? (
+            <>
+              {isAdaptiveQuizActive && (
+                <View style={styles.adaptiveBanner}>
+                  <Text style={styles.adaptiveBannerTitle}>
+                    {adaptiveQuiz?.mode === "remedial"
+                      ? "Remedial Practice"
+                      : "Follow-up Practice"}
+                  </Text>
+                  <Text style={styles.adaptiveBannerText}>
+                    These AI-generated questions are tailored to your quiz scores.
+                  </Text>
+                </View>
+              )}
+              <Quiz
+                questions={activeQuizQuestions}
+                onComplete={
+                  isAdaptiveQuizActive
+                    ? handleAdaptiveQuizComplete
+                    : handleQuizComplete
+                }
+              />
+            </>
+          ) : (
+            <View style={styles.buttonContainer}>
+              <Text style={styles.emptyText}>
+                No quiz questions available for this chapter.
+              </Text>
+              <Button title="Continue" onPress={moveToNextChapterOrComplete} />
+            </View>
+          )
+        ) : (
+          <>
+            <ContentRenderer blocks={[block]} />
+            <View style={styles.buttonContainer}>
+              {hasAssignment ? (
+                <>
+                  <View style={styles.assignmentCard}>
+                    <Text style={styles.assignmentTitle}>
+                      {assignment?.title || "Lesson Assignment"}
+                    </Text>
+                    <Text style={styles.assignmentInstructions}>
+                      {assignment?.instructions || ""}
+                    </Text>
+                    {Array.isArray(assignment?.acceptedFileTypes) &&
+                    assignment?.acceptedFileTypes.length > 0 ? (
+                      <Text style={styles.assignmentMeta}>
+                        Accepted: {assignment.acceptedFileTypes.join(", ")}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.assignmentMeta}>
+                      Pass threshold: {assignment?.passingScore ?? 70}/
+                      {assignment?.maxScore ?? 100}
+                    </Text>
+
+                    {assignmentLoading ? (
+                      <ActivityIndicator size="small" color="#0f766e" />
+                    ) : null}
+
+                    {assignmentSubmission ? (
+                      <View style={styles.assignmentStatus}>
+                        <Text style={styles.assignmentStatusTitle}>
+                          Status:{" "}
+                          {assignmentSubmission.status === "graded"
+                            ? assignmentSubmission.passed
+                              ? "Passed"
+                              : "Graded - needs revision"
+                            : "Submitted - awaiting grade"}
+                        </Text>
+                        {typeof assignmentSubmission.score === "number" ? (
+                          <Text style={styles.assignmentStatusText}>
+                            Score: {assignmentSubmission.score}
+                          </Text>
+                        ) : null}
+                        {assignmentSubmission.feedback ? (
+                          <Text style={styles.assignmentStatusText}>
+                            Feedback: {assignmentSubmission.feedback}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+
+                    {!assignmentPassed && (
+                      <View>
+                        <TextInput
+                          value={assignmentFileName}
+                          onChangeText={setAssignmentFileName}
+                          placeholder="File name (e.g. portfolio.pdf)"
+                          style={styles.assignmentInput}
+                        />
+                        <TextInput
+                          value={assignmentFileUrl}
+                          onChangeText={setAssignmentFileUrl}
+                          placeholder="File URL (Drive/GitHub/etc.)"
+                          autoCapitalize="none"
+                          style={styles.assignmentInput}
+                        />
+                        <TextInput
+                          value={assignmentNotes}
+                          onChangeText={setAssignmentNotes}
+                          placeholder="Notes for educator (optional)"
+                          multiline
+                          style={[styles.assignmentInput, styles.assignmentNotes]}
+                        />
+                        <TouchableOpacity
+                          onPress={handleSubmitAssignment}
+                          disabled={submittingAssignment}
+                          style={[
+                            styles.askButton,
+                            submittingAssignment ? styles.askButtonDisabled : null,
+                          ]}
+                        >
+                          <Text style={styles.askButtonText}>
+                            {submittingAssignment
+                              ? "Submitting..."
+                              : assignmentSubmission
+                                ? "Resubmit assignment"
+                                : "Submit assignment"}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+
+                  {assignmentPassed ? (
+                    <Button
+                      title="Continue"
+                      onPress={moveToNextChapterOrComplete}
+                    />
+                  ) : (
+                    <Text style={styles.emptyText}>
+                      Complete and pass this assignment to unlock the next chapter.
+                    </Text>
+                  )}
+                </>
+              ) : (
+                <Button title="Mark as Completed" onPress={handleChapterComplete} />
+              )}
+            </View>
+          </>
+        )}
+      </Animated.View>
+
+      <View style={styles.discussionSection}>
+        <Text style={styles.discussionTitle}>Comments for {lessonTitle}</Text>
+        <Text style={styles.discussionSubtitle}>
+          Discuss this lesson with threaded comments.
+        </Text>
+
+        {canComment && (
+          <View style={styles.askContainer}>
+            <TextInput
+              value={commentText}
+              onChangeText={setCommentText}
+              placeholder="Write a comment about this lesson..."
+              multiline
+              style={styles.askInput}
+            />
+            <TouchableOpacity
+              onPress={() => handlePostComment()}
+              disabled={postingComment}
+              style={[
+                styles.askButton,
+                postingComment ? styles.askButtonDisabled : null,
+              ]}
+            >
+              <Text style={styles.askButtonText}>
+                {postingComment ? "Posting..." : "Post comment"}
+              </Text>
+            </TouchableOpacity>
           </View>
-        </>
-      )}
+        )}
+
+        {commentLoading && (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator size="small" color="#0f766e" />
+            <Text style={styles.loadingText}>Loading comments...</Text>
+          </View>
+        )}
+
+        {!commentLoading && commentError ? (
+          <Text style={styles.errorText}>{commentError}</Text>
+        ) : null}
+
+        {!commentLoading && !commentError && commentThreads.length === 0 && (
+          <Text style={styles.emptyText}>No comments yet. Start the discussion.</Text>
+        )}
+
+        {!commentLoading &&
+          !commentError &&
+          commentThreads.map((thread) => renderCommentThread(thread))}
+      </View>
 
       {/* Confetti animation */}
       {showConfetti && (
@@ -174,6 +883,172 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 16 },
   chapterIndicator: { fontSize: 16, color: "#666", marginBottom: 16 },
   buttonContainer: { marginVertical: 20, alignItems: "center" },
+  assignmentCard: {
+    width: "100%",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#d1fae5",
+    backgroundColor: "#f0fdfa",
+    padding: 12,
+    marginBottom: 12,
+  },
+  assignmentTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#134e4a",
+  },
+  assignmentInstructions: {
+    marginTop: 6,
+    fontSize: 13,
+    color: "#0f172a",
+  },
+  assignmentMeta: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#0f766e",
+  },
+  assignmentStatus: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 10,
+    backgroundColor: "#ecfeff",
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+  },
+  assignmentStatusTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#115e59",
+  },
+  assignmentStatusText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#0f766e",
+  },
+  assignmentInput: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+  },
+  assignmentNotes: {
+    minHeight: 64,
+    textAlignVertical: "top",
+  },
+  adaptiveBanner: {
+    marginBottom: 14,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#99f6e4",
+    backgroundColor: "#ecfeff",
+  },
+  adaptiveBannerTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#115e59",
+  },
+  adaptiveBannerText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#0f766e",
+  },
+  discussionSection: {
+    marginTop: 8,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: "#f8fafc",
+    borderColor: "#e2e8f0",
+    borderWidth: 1,
+    marginBottom: 24,
+  },
+  discussionTitle: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  discussionSubtitle: {
+    marginTop: 6,
+    color: "#475569",
+    fontSize: 13,
+    marginBottom: 12,
+  },
+  askContainer: {
+    marginBottom: 12,
+  },
+  askInput: {
+    minHeight: 82,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+    borderRadius: 10,
+    padding: 10,
+    textAlignVertical: "top",
+    backgroundColor: "#fff",
+  },
+  askButton: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    backgroundColor: "#0f766e",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  askButtonDisabled: {
+    opacity: 0.6,
+  },
+  askButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  loadingText: {
+    color: "#475569",
+    fontSize: 13,
+    marginLeft: 8,
+  },
+  errorText: {
+    color: "#b91c1c",
+    fontSize: 13,
+  },
+  emptyText: {
+    color: "#64748b",
+    fontSize: 13,
+  },
+  threadCard: {
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: "#fff",
+    marginTop: 10,
+  },
+  threadMeta: {
+    fontSize: 12,
+    color: "#64748b",
+    marginBottom: 6,
+  },
+  threadQuestion: {
+    fontSize: 14,
+    color: "#0f172a",
+    fontWeight: "600",
+  },
+  threadReplyDepth: {
+    marginLeft: 12,
+    borderLeftWidth: 2,
+    borderLeftColor: "#cbd5e1",
+  },
+  replyAction: {
+    marginTop: 8,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#0f766e",
+  },
 });
 
 export default CoursePlayerScreen;

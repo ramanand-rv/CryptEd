@@ -6,6 +6,67 @@ import bs58 from "bs58";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../lib/api";
 
+interface OwnedCertificate {
+  mintAddress: string;
+  courseTitle?: string;
+  metadataUri?: string;
+  metadataName?: string;
+  metadataDescription?: string;
+  metadataAttributes?: Array<{
+    trait_type: string;
+    value: string;
+  }>;
+  mintedAt?: string;
+  explorerUrl?: string;
+  verifyUrl?: string;
+}
+
+const normalizeCertificate = (entry: unknown): OwnedCertificate | null => {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const raw = entry as Record<string, unknown>;
+  const mintAddress =
+    typeof raw.mintAddress === "string" ? raw.mintAddress.trim() : "";
+  if (!mintAddress) return null;
+
+  const metadataAttributes = Array.isArray(raw.metadataAttributes)
+    ? raw.metadataAttributes
+        .map((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+          const value = item as Record<string, unknown>;
+          const trait_type =
+            typeof value.trait_type === "string" ? value.trait_type.trim() : "";
+          const attrValue =
+            typeof value.value === "string" ? value.value.trim() : "";
+          if (!trait_type || !attrValue) return null;
+          return { trait_type, value: attrValue };
+        })
+        .filter(
+          (item): item is { trait_type: string; value: string } => Boolean(item),
+        )
+    : [];
+
+  return {
+    mintAddress,
+    courseTitle: typeof raw.courseTitle === "string" ? raw.courseTitle : undefined,
+    metadataUri:
+      typeof raw.metadataUri === "string" ? raw.metadataUri : undefined,
+    metadataName:
+      typeof raw.metadataName === "string" ? raw.metadataName : undefined,
+    metadataDescription:
+      typeof raw.metadataDescription === "string"
+        ? raw.metadataDescription
+        : undefined,
+    metadataAttributes,
+    mintedAt: typeof raw.mintedAt === "string" ? raw.mintedAt : undefined,
+    explorerUrl:
+      typeof raw.explorerUrl === "string" ? raw.explorerUrl : undefined,
+    verifyUrl: typeof raw.verifyUrl === "string" ? raw.verifyUrl : undefined,
+  };
+};
+
+const shortenMint = (mintAddress: string) =>
+  `${mintAddress.slice(0, 8)}...${mintAddress.slice(-6)}`;
+
 const Profile: React.FC = () => {
   const { user, token, refreshUser } = useAuth();
   const { publicKey, connected, signMessage } = useWallet();
@@ -44,6 +105,12 @@ const Profile: React.FC = () => {
     if (!savedWallet) return "";
     return `${savedWallet.slice(0, 4)}...${savedWallet.slice(-4)}`;
   }, [savedWallet]);
+  const certificates = useMemo(() => {
+    const owned = Array.isArray(user?.ownedNFTs) ? user.ownedNFTs : [];
+    return owned
+      .map((entry) => normalizeCertificate(entry))
+      .filter((entry): entry is OwnedCertificate => Boolean(entry));
+  }, [user?.ownedNFTs]);
 
   const isWalletVerified = Boolean(user?.walletVerifiedAt);
   const isConnectedAndVerified =
@@ -440,6 +507,101 @@ const Profile: React.FC = () => {
                 {changingPassword ? "Updating..." : "Update password"}
               </button>
             </div>
+          </div>
+
+          <div className="rounded-3xl border border-white/60 bg-white/80 p-6 shadow-soft space-y-5 lg:col-span-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Certificates
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Your minted course completion certificates and metadata.
+                </p>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                {certificates.length} minted
+              </span>
+            </div>
+
+            {certificates.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500 text-center">
+                No certificates yet. Complete a course and claim certificate to see it here.
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 gap-4">
+                {certificates.map((certificate) => (
+                  <article
+                    key={certificate.mintAddress}
+                    className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {certificate.metadataName ||
+                          certificate.courseTitle ||
+                          "Course Completion Certificate"}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Mint: {shortenMint(certificate.mintAddress)}
+                      </p>
+                      {certificate.mintedAt && (
+                        <p className="text-xs text-slate-500 mt-1">
+                          Issued {new Date(certificate.mintedAt).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+
+                    {certificate.metadataDescription && (
+                      <p className="text-sm text-slate-600">
+                        {certificate.metadataDescription}
+                      </p>
+                    )}
+
+                    {certificate.metadataAttributes &&
+                    certificate.metadataAttributes.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {certificate.metadataAttributes.map((attribute, idx) => (
+                          <span
+                            key={`${certificate.mintAddress}-${attribute.trait_type}-${idx}`}
+                            className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-700"
+                          >
+                            {attribute.trait_type}: {attribute.value}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {certificate.verifyUrl && (
+                        <a
+                          href={certificate.verifyUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-emerald-200 hover:text-emerald-700 transition"
+                        >
+                          Verify
+                        </a>
+                      )}
+                      {certificate.explorerUrl && (
+                        <a
+                          href={certificate.explorerUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-emerald-200 hover:text-emerald-700 transition"
+                        >
+                          Explorer
+                        </a>
+                      )}
+                      {certificate.metadataUri && (
+                        <span className="text-xs text-slate-400 break-all">
+                          Metadata URI: {certificate.metadataUri}
+                        </span>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

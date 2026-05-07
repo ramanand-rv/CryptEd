@@ -28,7 +28,16 @@ export interface ICourse extends Document {
     totalAmount: number; // lamports
     remaining: number;
     winnersCount: number;
-    winners: mongoose.Types.ObjectId[];
+    winners: Array<
+      | mongoose.Types.ObjectId
+      | {
+          userId: mongoose.Types.ObjectId;
+          walletAddress?: string;
+          amount: number; // lamports
+          txSignature?: string;
+          awardedAt: Date;
+        }
+    >;
   };
   createdAt: Date;
   updatedAt: Date;
@@ -57,7 +66,7 @@ const CourseSchema: Schema = new Schema(
       totalAmount: { type: Number, default: 0 },
       remaining: { type: Number, default: 0 },
       winnersCount: { type: Number, default: 0 },
-      winners: [{ type: Schema.Types.ObjectId, ref: "User" }],
+      winners: [{ type: Schema.Types.Mixed }],
     },
   },
   { timestamps: true },
